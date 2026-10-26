@@ -18,6 +18,16 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true; buildConfig = true }
+    val releaseStorePath = providers.environmentVariable("ONEFRAME_KEYSTORE_PATH").orNull
+    if (releaseStorePath != null) {
+        val releaseSigning = signingConfigs.create("oneFrameRelease") {
+            storeFile = file(releaseStorePath)
+            storePassword = providers.environmentVariable("ONEFRAME_STORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("ONEFRAME_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("ONEFRAME_KEY_PASSWORD").get()
+        }
+        buildTypes.getByName("release") { signingConfig = releaseSigning }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

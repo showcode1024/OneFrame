@@ -14,3 +14,5 @@ keystore.properties
 *.apk
 *.aab
 *.aar
+__pycache__/
+*.pyc

@@ -10,7 +10,8 @@ Android 原生 Emby 播放器的首个可运行原型。手机、平板优先，
 
 - Android 8.0 / API 26 及以上，当前 APK 包含 arm64-v8a 与 x86_64。
 - GPU 需支持原生库要求的 OpenGL ES 功能；CPU 软解仍需要 GPU 完成颜色处理和显示。
-- 安装本地构建产物 `artifacts/OneFrame-0.1.2-alpha.apk`，或从 [Actions](https://github.com/showcode1024/OneFrame/actions/workflows/android.yml) 成功运行的 `OneFrame-debug` artifact 下载测试 APK。打开本地视频或输入 HTTP/HTTPS 播放地址。
+- 从 [Releases](https://github.com/showcode1024/OneFrame/releases) 的 **Assets** 下载 `OneFrame-版本号.apk` 安装，源代码压缩包不是安装包。打开本地视频或输入 HTTP/HTTPS 播放地址。
+- 首次切换到 Release 的项目专用签名包，不能直接覆盖早期本地开发签名或临时 CI debug 包。请先保存服务器信息，再自行卸载旧测试版并安装；后续同签名、版本号递增的 Release 可以覆盖升级。
 - 0.1.1 默认优先系统解码底层视频，再由 libplacebo 处理颜色，固定输出 SDR / BT.709；仍保留强制 CPU 软解选项。
 - 升级会保留明确设置过的 CPU 开关。如需要测试自动模式，请关闭“强制 CPU 软件解码”，退出播放后重开视频。系统解码无法使用时可能回退 CPU，界面会显示实际路径。
 - 点击播放页右上角的信息按钮查看真实路径并复制诊断。
@@ -67,7 +68,9 @@ Windows：
 
 首次构建需要连接 Google Maven 与 Maven Central。若发生 TLS/下载失败，先修复网络或重试，不关闭证书校验。
 
-仓库的 Android build 工作流会执行构建、单元测试和 Lint，并保存测试 APK。CI 临时签名与本地开发签名可能不同；需要覆盖升级早期测试版时，请使用同一台开发环境构建的 APK。
+仓库有两个工作流：`Android build` 在分支更新时构建 debug 测试产物；`Publish Android release` 在推送 `v版本号` 标签时，由 GitHub 从源码构建、使用项目固定签名、验证并自动上传 APK 和 SHA-256 文件到 Releases。发布说明放在 `docs/releases/v版本号.md`，标签必须与 `versionName` 一致。
+
+发布签名通过仓库的四个 Actions Secrets 提供：`ONEFRAME_KEYSTORE_BASE64`、`ONEFRAME_STORE_PASSWORD`、`ONEFRAME_KEY_ALIAS`、`ONEFRAME_KEY_PASSWORD`。私钥和密码不进入 Git，也不包含在 APK 内。首次配置后不要随意更换，否则后续包将无法覆盖升级。更新版本时同时递增 `versionCode` 和 `versionName`，提交发布说明，再推送对应标签。
 
 ## 代码位置
 
