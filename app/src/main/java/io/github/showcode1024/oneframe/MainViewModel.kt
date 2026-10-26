@@ -21,16 +21,27 @@ data class HomeState(
     val canLoadMore: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
+    val resumeItems: List<LibraryItem> = emptyList(),
+    val latestItems: List<LibraryItem> = emptyList(),
+    val detail: LibraryItem? = null,
+    val versions: List<MediaVersion> = emptyList(),
+    val selectedVersionId: String? = null,
+    val versionsLoading: Boolean = false,
+    val versionsError: String? = null,
+    val servers: List<EmbySession> = emptyList(),
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
     val api = EmbyClient(store.deviceId)
-    private val mutableState = MutableStateFlow(HomeState(store.session(), store.recents(), store.softwareDecode))
+    private val mutableState = MutableStateFlow(HomeState(store.session(), store.recents(), store.softwareDecode, servers = store.sessions()))
     val state = mutableState.asStateFlow()
     private var libraryJob: Job? = null
+    private var versionsJob: Job? = null
+    private var homeJob: Job? = null
+    private var playbackJob: Job? = null
 
-    init { if (state.value.session != null) loadLibrary() }
+    init { if (state.value.session != null) { loadLibrary(); refreshHome() } }
     fun refreshRecents() { mutableState.update { it.copy(recents = store.recents()) } }
     fun softwareDecode(enabled: Boolean) {
         store.setSoftwareDecode(enabled)
@@ -45,21 +56,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val session = api.login(base, user, password)
+                libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel()
                 store.saveSession(session)
-                mutableState.update { it.copy(session = session, path = emptyList(), search = "", loading = false) }
+                mutableState.update { it.copy(session = session, servers = store.sessions(), path = emptyList(), search = "", loading = false,
+                    items = emptyList(), resumeItems = emptyList(), latestItems = emptyList(), detail = null) }
                 connected()
                 loadLibrary()
+                refreshHome()
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { fail(error) }
+            catch (error: Exception) { fail(error, invalidateSession = false) }
         }
     }
 
-    fun logout() {
+    fun switchServer(session: EmbySession) {
+        if (session == state.value.session) return
         libraryJob?.cancel()
-        val old = state.value.session
-        store.clearSession()
-        mutableState.update { it.copy(session = null, items = emptyList(), path = emptyList(), search = "", loading = false) }
-        if (old != null) viewModelScope.launch { runCatching { api.logout(old) } }
+        versionsJob?.cancel()
+        homeJob?.cancel()
+        playbackJob?.cancel()
+        store.saveSession(session)
+        mutableState.update { it.copy(session = session, servers = store.sessions(), items = emptyList(), path = emptyList(), search = "", loading = false,
+            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList()) }
+        loadLibrary(); refreshHome()
+    }
+
+    fun removeServer(server: EmbySession) {
+        val wasActive = state.value.session == server
+        if (wasActive) { libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel() }
+        val active = store.removeSession(server)
+        mutableState.update { if (wasActive) it.copy(session = active, servers = store.sessions(), items = emptyList(), path = emptyList(), search = "", loading = false,
+            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList())
+            else it.copy(servers = store.sessions()) }
+        if (wasActive && active != null) { loadLibrary(); refreshHome() }
+        viewModelScope.launch { runCatching { api.logout(server) } }
     }
 
     fun openFolder(item: LibraryItem) {
@@ -91,13 +120,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun play(item: LibraryItem, ready: (StreamSource) -> Unit) {
+    fun refreshHome() {
+        val session = state.value.session ?: return
+        homeJob?.cancel()
+        homeJob = viewModelScope.launch {
+            val resume = try { api.resumeItems(session) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
+            val latest = try { api.latestItems(session) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
+            if (state.value.session == session) mutableState.update { current -> current.copy(resumeItems = resume, latestItems = latest,
+                detail = current.detail?.let { detail -> (resume + latest).firstOrNull { it.id == detail.id } ?: detail }) }
+        }
+    }
+
+    fun openDetail(item: LibraryItem) {
+        versionsJob?.cancel()
+        val session = state.value.session ?: return
+        mutableState.update { it.copy(detail = item, versions = emptyList(), selectedVersionId = null, versionsLoading = true, versionsError = null) }
+        versionsJob = viewModelScope.launch {
+            try {
+                val versions = api.playbackOptions(session, item)
+                if (state.value.detail?.id == item.id && state.value.session == session) mutableState.update {
+                    it.copy(versions = versions, selectedVersionId = versions.firstOrNull { v -> v.playable }?.id, versionsLoading = false,
+                        versionsError = if (versions.isEmpty()) "服务器没有返回视频版本" else null)
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (state.value.detail?.id == item.id) mutableState.update { it.copy(versionsLoading = false, versionsError = "无法获取版本，请检查网络后重试") }
+            }
+        }
+    }
+    fun closeDetail() { versionsJob?.cancel(); playbackJob?.cancel(); mutableState.update { it.copy(detail = null, versionsLoading = false, loading = false, error = null) } }
+    fun selectVersion(id: String) { mutableState.update { it.copy(selectedVersionId = id) } }
+
+    fun playSelected(ready: (StreamSource) -> Unit) {
         if (state.value.loading) return
         val session = state.value.session ?: return
-        viewModelScope.launch {
+        val item = state.value.detail ?: return
+        val selected = state.value.selectedVersionId ?: return
+        playbackJob = viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = null) }
             try {
-                val source = api.playback(session, item)
+                val source = api.playback(session, item, selected)
                 mutableState.update { it.copy(loading = false) }
                 ready(source)
             } catch (error: CancellationException) { throw error }
@@ -105,10 +167,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun fail(error: Exception) {
-        if (error is EmbyException && error.status == 401) {
-            store.clearSession()
-            mutableState.update { it.copy(session = null, items = emptyList(), path = emptyList()) }
+    private fun fail(error: Exception, invalidateSession: Boolean = true) {
+        if (invalidateSession && error is EmbyException && error.status == 401) {
+            val active = state.value.session?.let { store.removeSession(it) }
+            mutableState.update { it.copy(session = active, servers = store.sessions(), items = emptyList(), path = emptyList(), detail = null) }
+            if (active != null) { loadLibrary(); refreshHome() }
         }
         val message = when (error) {
             is EmbyException -> error.message

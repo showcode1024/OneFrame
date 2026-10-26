@@ -40,7 +40,7 @@ class PlayerActivity : ComponentActivity() {
             context.startActivity(Intent(context, PlayerActivity::class.java).putExtra("uri", source.url)
                 .putExtra("title", source.title).putExtra("start", source.startSeconds)
                 .putExtra("itemId", source.itemId).putExtra("mediaSourceId", source.mediaSourceId)
-                .putExtra("playSessionId", source.playSessionId))
+                .putExtra("playSessionId", source.playSessionId).putExtra("versionName", source.versionName))
         }
     }
     private lateinit var engine: MpvEngine
@@ -96,7 +96,7 @@ class PlayerActivity : ComponentActivity() {
                 updateSystemSession()
             }
         }
-        setContent { OneFrameTheme { PlayerScreen(title, engine,
+        setContent { OneFrameTheme { PlayerScreen(title, engine, versionName = intent.getStringExtra("versionName").orEmpty(),
             surface = { surfaceView() }, close = { finish() },
             rotate = { requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE },

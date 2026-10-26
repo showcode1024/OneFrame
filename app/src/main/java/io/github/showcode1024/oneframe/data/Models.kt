@@ -6,10 +6,18 @@ data class LibraryItem(
     val id: String, val title: String, val type: String,
     val year: String = "", val overview: String = "", val imageTag: String = "",
     val folder: Boolean = false, val positionTicks: Long = 0,
+    val backdropTag: String = "", val runtimeTicks: Long = 0,
+    val genres: List<String> = emptyList(), val rating: String = "",
+)
+data class MediaVersion(
+    val id: String, val name: String, val container: String, val size: Long,
+    val width: Int, val height: Int, val videoCodec: String, val audioCodec: String,
+    val videoRange: String, val playable: Boolean, val runtimeTicks: Long,
 )
 data class StreamSource(
     val url: String, val itemId: String, val mediaSourceId: String,
     val playSessionId: String, val title: String, val startSeconds: Double,
+    val versionName: String = "",
 )
 
 object PlaybackPolicy {

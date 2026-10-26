@@ -17,6 +17,7 @@ import io.github.showcode1024.oneframe.ui.OneFrameTheme
 
 class MainActivity : ComponentActivity() {
     private val model: MainViewModel by viewModels()
+    private var returningFromEmby = false
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -37,8 +38,10 @@ class MainActivity : ComponentActivity() {
             pickFile = { filePicker.launch(arrayOf("video/*", "application/octet-stream")) },
             playRecent = { PlayerActivity.open(this, it.uri, it.title, it.position, true) },
             playUrl = { PlayerActivity.open(this, it, "网络视频", 0.0, false) },
-            playEmby = { item -> model.play(item) { PlayerActivity.openEmby(this, it) } },
+            playEmby = { model.playSelected { returningFromEmby = true; PlayerActivity.openEmby(this, it) } },
         ) } }
     }
-    override fun onResume() { super.onResume(); model.refreshRecents() }
+    override fun onResume() { super.onResume(); model.refreshRecents(); if (returningFromEmby) {
+        returningFromEmby = false; model.refreshHome(); model.loadLibrary()
+    } }
 }

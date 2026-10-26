@@ -50,25 +50,52 @@ class LocalStore(context: Context) {
         }
     }
 
-    fun saveSession(session: EmbySession) {
-        val text = JSONObject().put("url", session.baseUrl).put("userId", session.userId)
-            .put("token", session.token).put("name", session.userName).toString()
+    private fun sessionJson(session: EmbySession) = JSONObject().put("url", session.baseUrl).put("userId", session.userId)
+        .put("token", session.token).put("name", session.userName)
+    private fun parseSession(json: JSONObject) = EmbySession(json.getString("url"), json.getString("userId"), json.getString("token"), json.getString("name"))
+    private fun encrypt(text: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val encrypted = cipher.doFinal(text.toByteArray(Charsets.UTF_8))
-        preferences.edit().putString("session", Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)).apply()
+        return Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
     }
-
-    fun session(): EmbySession? = runCatching {
-        val bytes = Base64.decode(preferences.getString("session", null) ?: return null, Base64.NO_WRAP)
+    private fun decrypt(value: String): String {
+        val bytes = Base64.decode(value, Base64.NO_WRAP)
         require(bytes.size > 28)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
         }
-        val json = JSONObject(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8))
-        EmbySession(json.getString("url"), json.getString("userId"), json.getString("token"), json.getString("name"))
+        return String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
+    }
+
+    fun session(): EmbySession? = runCatching {
+        parseSession(JSONObject(decrypt(preferences.getString("session", null) ?: return null)))
     }.getOrNull()
 
-    fun clearSession() { preferences.edit().remove("session").apply() }
+    fun sessions(): List<EmbySession> {
+        val saved = preferences.getString("sessions", null) ?: return listOfNotNull(session())
+        return runCatching { val json = JSONArray(decrypt(saved)); List(json.length()) { parseSession(json.getJSONObject(it)) } }
+            .getOrElse { listOfNotNull(session()) }
+    }
+
+    @Synchronized fun saveSession(session: EmbySession) {
+        val entries = sessions().filterNot { it.baseUrl == session.baseUrl && it.userId == session.userId } + session
+        val json = JSONArray().apply { entries.forEach { put(sessionJson(it)) } }
+        preferences.edit().putString("session", encrypt(sessionJson(session).toString()))
+            .putString("sessions", encrypt(json.toString())).apply()
+    }
+
+    @Synchronized fun removeSession(session: EmbySession): EmbySession? {
+        val entries = sessions().filterNot { it.baseUrl == session.baseUrl && it.userId == session.userId }
+        val active = this.session()?.let { current ->
+            if (current.baseUrl == session.baseUrl && current.userId == session.userId) entries.firstOrNull() else current
+        }
+        val json = JSONArray().apply { entries.forEach { put(sessionJson(it)) } }
+        val edit = preferences.edit().putString("sessions", encrypt(json.toString()))
+        if (active == null) edit.remove("session") else edit.putString("session", encrypt(sessionJson(active).toString()))
+        edit.apply()
+        return active
+    }
+    fun clearSession() { session()?.let { removeSession(it) } ?: preferences.edit().remove("session").apply() }
     val deviceId: String get() = preferences.getString("deviceId", null) ?: java.util.UUID.randomUUID().toString().also {
         preferences.edit().putString("deviceId", it).apply()
     }

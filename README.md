@@ -4,7 +4,7 @@ Android 原生 Emby 播放器的首个可运行原型。手机、平板优先，
 
 仓库：[showcode1024/OneFrame](https://github.com/showcode1024/OneFrame)。
 
-当前版本：**0.1.2-alpha**。本版本统一更名为 OneFrame，保留 0.1.1 的自动解码与诊断。详见 [当前验证记录](docs/VALIDATION-0.1.2.md)。
+当前版本：**0.1.3-alpha**。新增多个 Emby 服务器管理、影片版本选择和海报式片库首页。此前的播放路径与验证范围见 [0.1.2 验证记录](docs/VALIDATION-0.1.2.md)。
 
 ## 运行
 
@@ -30,14 +30,14 @@ P5、P8.1、P8.4 是首批验证对象。Profile 7 FEL 完整增强层重建未�
 
 ## Emby
 
-支持手动填写服务器地址、账号和密码，浏览媒体库/子目录、搜索、查看简介、获取 PlaybackInfo 后直放，并上报播放开始、进度与停止。
+支持添加、切换和移除多个服务器账号；展示继续观看、最近添加与媒体库，浏览目录、搜索并查看影片详情。可选择同一影片下服务器返回的不同视频版本，播放器显示所选版本，并上报播放开始、进度与停止。
 
 - 保留反向代理路径，例如 `https://example.com/media/emby`。
 - Token 用 Android Keystore 保护的 AES-GCM 加密保存，不保存账号密码。
-- 原型只选择可直放、无需另行打开的媒体源，不自动请求视频转码，以免改变杜比片源。
+- 版本列表来自 Emby 的 PlaybackInfo；服务器没有归并为同一影片的文件会作为独立条目显示。不可直放的版本会列出但无法选择。播放时重新确认所选源，不自动切换文件或请求转码。
 - 网络视频通过随机路径的本机回环转发器进入原生播放器，避免远端 Token 出现在原生播放 URL 日志中；跨站重定向不携带 Emby Token，HTTPS 证书正常校验。
 - 支持可信局域网 HTTP；使用 HTTP 时账号和视频仍会明文经过网络，界面会提示。
-- 暂不支持 Emby Connect、多服务器同时聚合、Live TV、离线下载、播放版本选择和完整外置字幕发现。
+- 暂不支持 Emby Connect、多服务器内容同时聚合、Live TV、离线下载和完整外置字幕发现。
 - 当前没有用户的真实服务器凭据，Emby 接口通过 MockWebServer 验证，真实服务器联调待完成。
 
 ## 升级兼容
@@ -84,7 +84,7 @@ app/src/main/java/io/github/showcode1024/oneframe/
   data/LocalStore.kt                  观看记录、偏好、加密账号会话
 ```
 
-该版本为本地开发签名的 alpha APK，适合测试。0.1.1 没有改变 SDR 输出目标，也没有新增 P7 FEL 或 Atmos 对象渲染。后续开发重点：真实设备画质与性能、P7 FEL、Atmos 对象渲染、完整 Emby 字幕/版本协商、平板精细布局、播放器服务与画中画。
+该版本为 alpha，适合测试。SDR 输出目标不变，尚未新增 P7 FEL 完整重建或 Atmos 对象渲染。后续开发重点：真实设备画质与性能、P7 FEL、Atmos 对象渲染、完整 Emby 字幕支持、平板精细布局、播放器服务与画中画。
 
 原生库来源与相关许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)。
 
@@ -93,5 +93,9 @@ app/src/main/java/io/github/showcode1024/oneframe/
 以下为 OneFrame 的实际模拟器截图。
 
 ![手机主页](docs/screenshots/home-phone.png)
+
+影片详情和版本选择（模拟服务器示例数据）：
+
+![影片版本选择](docs/screenshots/emby-versions-phone.png)
 
 ![P5 播放诊断](docs/screenshots/diagnostics-dolby-p5.png)

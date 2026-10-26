@@ -75,5 +75,45 @@ class EmbyClientTest {
         assertEquals("play", body.getString("PlaySessionId"))
         assertEquals("Pause", body.getString("EventName"))
         assertTrue(body.getBoolean("IsPaused"))
+        assertEquals("DirectStream", body.getString("PlayMethod"))
+    }
+
+    @Test fun listsVersionsAndPlaysTheExplicitlySelectedSource() = runBlocking {
+        val versions = """{"MediaSources":[{"Id":"first","Name":"1080p","SupportsDirectPlay":true},{"Id":"second","Name":"4K Dolby","Container":"mkv","Size":2147483648,"SupportsDirectStream":true,"MediaStreams":[{"Type":"Video","Width":3840,"Height":2160,"Codec":"hevc","VideoRangeType":"DOVI"},{"Type":"Audio","Codec":"truehd"}]}]}"""
+        server.enqueue(MockResponse().setBody(versions))
+        server.enqueue(MockResponse().setBody(versions.replace("{\"MediaSources\"", "{\"PlaySessionId\":\"fresh-session\",\"MediaSources\"")))
+        val item = LibraryItem("movie", "Movie", "Movie")
+        val available = api.playbackOptions(session, item)
+        assertEquals(listOf("first", "second"), available.map { it.id })
+        assertEquals(2160, available[1].height)
+        assertEquals("DOVI", available[1].videoRange)
+        assertTrue(available[1].playable)
+        val source = api.playback(session, item, "second")
+        assertEquals("second", source.mediaSourceId)
+        assertEquals("fresh-session", source.playSessionId)
+        assertTrue(source.url.contains("MediaSourceId=second"))
+        val listing = JSONObject(server.takeRequest().body.readUtf8())
+        val selected = JSONObject(server.takeRequest().body.readUtf8())
+        assertFalse(listing.getBoolean("IsPlayback"))
+        assertTrue(selected.getBoolean("IsPlayback"))
+        assertEquals("second", selected.getString("MediaSourceId"))
+        assertFalse(selected.getBoolean("EnableTranscoding"))
+    }
+
+    @Test fun missingOrUnsupportedSelectedVersionNeverFallsBack() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"MediaSources":[{"Id":"other","SupportsDirectPlay":true}]}"""))
+        val missing = runCatching { api.playback(session, LibraryItem("item", "Movie", "Movie"), "chosen") }.exceptionOrNull()
+        assertTrue(missing is EmbyException)
+        server.enqueue(MockResponse().setBody("""{"MediaSources":[{"Id":"chosen","SupportsDirectPlay":true,"RequiresOpening":true}]}"""))
+        val unavailable = runCatching { api.playback(session, LibraryItem("item", "Movie", "Movie"), "chosen") }.exceptionOrNull()
+        assertTrue(unavailable is EmbyException)
+    }
+
+    @Test fun listingRetainsUnavailableVersionsWithoutInvalidIds() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"MediaSources":[{"Id":"a","SupportsDirectPlay":false},{"Id":"b","SupportsDirectStream":true},{"Name":"invalid"},{"Id":"b","SupportsDirectPlay":true}]}"""))
+        val versions = api.playbackOptions(session, LibraryItem("item", "Movie", "Movie"))
+        assertEquals(listOf("a", "b"), versions.map { it.id })
+        assertFalse(versions[0].playable)
+        assertTrue(versions[1].playable)
     }
 }

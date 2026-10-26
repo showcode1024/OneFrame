@@ -5,11 +5,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val Ink = Color(0xFF0B1014)
-val Panel = Color(0xFF151E25)
-val Mint = Color(0xFFA9EACB)
-val Muted = Color(0xFF94A6AF)
-val Line = Color(0xFF283740)
+val Ink = Color(0xFF080E19)
+val Panel = Color(0xFF182335)
+val Mint = Color(0xFF73B9FF)
+val Muted = Color(0xFF9AAAC0)
+val Line = Color(0xFF293B51)
 
 @Composable fun OneFrameTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(

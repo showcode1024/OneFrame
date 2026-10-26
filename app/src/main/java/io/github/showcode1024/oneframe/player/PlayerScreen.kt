@@ -30,7 +30,7 @@ import io.github.showcode1024.oneframe.ui.Muted
 import io.github.showcode1024.oneframe.ui.formatTime
 import kotlinx.coroutines.delay
 
-@Composable fun PlayerScreen(title: String, engine: MpvEngine, surface: () -> SurfaceView,
+@Composable fun PlayerScreen(title: String, engine: MpvEngine, versionName: String = "", surface: () -> SurfaceView,
     close: () -> Unit, rotate: () -> Unit, copyDiagnostics: () -> Unit) {
     val state by engine.state.collectAsStateWithLifecycle()
     var controls by remember { mutableStateOf(true) }
@@ -58,7 +58,8 @@ import kotlinx.coroutines.delay
                     IconButton(onClick = close) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White)
-                        Text(state.decoder, fontSize = 10.sp, color = Mint, modifier = Modifier.padding(top = 5.dp))
+                        Text(listOf(versionName, state.decoder).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 10.sp, color = Mint,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
                     }
                     IconButton(onClick = { dialog = "diagnostics" }, Modifier.testTag("diagnostics")) { Icon(Icons.Rounded.Info, "播放信息", tint = Color.White) }
                 }
@@ -100,6 +101,7 @@ import kotlinx.coroutines.delay
         "diagnostics" -> AlertDialog(onDismissRequest = { dialog = null }, title = { Text("播放信息") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 DiagnosticRow("视频", state.video)
+                if (versionName.isNotBlank()) DiagnosticRow("Emby 版本", versionName)
                 DiagnosticRow("解码", state.decoder)
                 DiagnosticRow("解码选择", if (state.decodePolicy == "no") "强制 CPU 软件解码" else "优先系统解码，失败后回退 CPU")
                 if (state.fallbackReason.isNotBlank()) DiagnosticRow("回退原因", state.fallbackReason)
