@@ -45,12 +45,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import io.github.showcode1024.oneframe.HomeState
 import io.github.showcode1024.oneframe.MainViewModel
+import io.github.showcode1024.oneframe.update.UpdateViewModel
 import io.github.showcode1024.oneframe.BuildConfig
 import io.github.showcode1024.oneframe.data.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @Composable fun HomeScreen(
-    model: MainViewModel, pickFile: () -> Unit, playRecent: (RecentMedia) -> Unit,
+    model: MainViewModel, updater: UpdateViewModel, pickFile: () -> Unit, playRecent: (RecentMedia) -> Unit,
     playUrl: (String) -> Unit, playEmby: () -> Unit,
 ) {
     val state by model.state.collectAsStateWithLifecycle()
@@ -108,7 +109,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
                     state.session!!, model, { if (it.folder || it.type in listOf("Series", "Season", "CollectionFolder", "BoxSet")) model.openFolder(it) else model.openDetail(it) })
                 1 -> LocalLibrary(state.recents, pickFile, { urlDialog = true }, playRecent, model::forget)
                 2 -> Settings(state.softwareDecode, model::softwareDecode, state.experimentalP5Hardware, model::experimentalP5Hardware,
-                    state.fastScaling, model::fastScaling, state.session, state.servers, { login = true }, model::switchServer, model::removeServer)
+                    state.fastScaling, model::fastScaling, state.session, state.servers, { login = true }, model::switchServer, model::removeServer, updater)
             }
         }
         }
@@ -376,10 +377,25 @@ private fun versionSummary(version: MediaVersion): String = buildList {
 
 @Composable private fun Settings(software: Boolean, setSoftware: (Boolean) -> Unit, experimentalHardware: Boolean,
     setExperimentalHardware: (Boolean) -> Unit, fastScaling: Boolean, setFastScaling: (Boolean) -> Unit, session: EmbySession?, servers: List<EmbySession>,
-    connect: () -> Unit, switch: (EmbySession) -> Unit, remove: (EmbySession) -> Unit) {
+    connect: () -> Unit, switch: (EmbySession) -> Unit, remove: (EmbySession) -> Unit, updater: UpdateViewModel) {
     var removing by remember { mutableStateOf<EmbySession?>(null) }
+    val updateState by updater.state.collectAsStateWithLifecycle()
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item { Text("播放，随你设定", fontSize = 26.sp, fontWeight = FontWeight.Medium) }
+        item { SettingCard("软件更新") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("自动检查更新")
+                    Text("启动时检查 GitHub Release，发现新版本后提醒。预览版会接收预览更新。", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
+                }
+                Switch(updateState.automatic, updater::automatic, modifier = Modifier.testTag("autoUpdate"))
+            }
+            Text("当前版本 ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 14.dp))
+            TextButton(onClick = { if (updateState.release != null) updater.show() else updater.check() },
+                enabled = !updateState.checking, modifier = Modifier.testTag("checkUpdates")) {
+                Text(if (updateState.checking) "正在检查…" else if (updateState.release != null) "查看更新" else "检查更新")
+            }
+        } }
         item { SettingCard("播放方式") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {

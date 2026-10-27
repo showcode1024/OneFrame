@@ -21,6 +21,10 @@ class LocalStore(context: Context) {
     fun setExperimentalP5Hardware(value: Boolean) { preferences.edit().putBoolean("p5_hardware_experiment", value).apply() }
     val fastScaling: Boolean get() = preferences.getBoolean("fast_scaling", false)
     fun setFastScaling(value: Boolean) { preferences.edit().putBoolean("fast_scaling", value).apply() }
+    val autoUpdate: Boolean get() = preferences.getBoolean("auto_update", true)
+    fun setAutoUpdate(value: Boolean) { preferences.edit().putBoolean("auto_update", value).apply() }
+    val lastUpdateCheck: Long get() = preferences.getLong("last_update_check", 0)
+    fun setLastUpdateCheck(value: Long) { preferences.edit().putLong("last_update_check", value).apply() }
 
     fun recents(): List<RecentMedia> = runCatching {
         val values = JSONArray(preferences.getString("recents", "[]"))

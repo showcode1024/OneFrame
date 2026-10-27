@@ -10,6 +10,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.showcode1024.oneframe.data.LocalStore
 import io.github.showcode1024.oneframe.data.EmbySession
+import io.github.showcode1024.oneframe.update.ApkVerifier
+import io.github.showcode1024.oneframe.update.UpdateRelease
+import androidx.core.content.FileProvider
 import io.github.showcode1024.oneframe.player.PlaybackState
 import io.github.showcode1024.oneframe.player.PlayerActivity
 import org.junit.Assert.*
@@ -35,6 +38,8 @@ class PlayerSmokeTest {
     private var originalSoftware = false
     private var originalExperimentalHardware = false
     private var originalFastScaling = false
+    private var originalAutoUpdate = true
+    private var originalLastUpdateCheck = 0L
     @Before fun isolatePreferences() {
         val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("prism", 0)
         originalSession = prefs.getString("session", null)
@@ -42,8 +47,10 @@ class PlayerSmokeTest {
         originalSoftware = prefs.getBoolean("software", false)
         originalExperimentalHardware = prefs.getBoolean("p5_hardware_experiment", false)
         originalFastScaling = prefs.getBoolean("fast_scaling", false)
+        originalAutoUpdate = prefs.getBoolean("auto_update", true)
+        originalLastUpdateCheck = prefs.getLong("last_update_check", 0)
         prefs.edit().remove("session").remove("sessions").commit()
-        prefs.edit().putBoolean("p5_hardware_experiment", false).putBoolean("fast_scaling", false).commit()
+        prefs.edit().putBoolean("p5_hardware_experiment", false).putBoolean("fast_scaling", false).putBoolean("auto_update", false).commit()
     }
     @After fun restorePreferences() {
         val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("prism", 0)
@@ -53,6 +60,8 @@ class PlayerSmokeTest {
             putBoolean("software", originalSoftware)
             putBoolean("p5_hardware_experiment", originalExperimentalHardware)
             putBoolean("fast_scaling", originalFastScaling)
+            putBoolean("auto_update", originalAutoUpdate)
+            putLong("last_update_check", originalLastUpdateCheck)
         }.commit()
     }
 
@@ -82,6 +91,35 @@ class PlayerSmokeTest {
             assertTrue(LocalStore(context).experimentalP5Hardware)
             assertTrue(LocalStore(context).fastScaling)
         }
+    }
+
+    @Test fun updateSettingCanBeDisabledAndReenabled() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithText("设置", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("autoUpdate").performScrollTo().assertIsOff()
+            compose.onNodeWithText("当前版本 ${io.github.showcode1024.oneframe.BuildConfig.VERSION_NAME}").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("autoUpdate").performClick().assertIsOn()
+            assertTrue(LocalStore(context).autoUpdate)
+            compose.onNodeWithTag("autoUpdate").performClick().assertIsOff()
+            assertFalse(LocalStore(context).autoUpdate)
+        }
+    }
+
+    @Test fun updaterRejectsInstalledVersionAndProvidesPrivateApkUri() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val version = io.github.showcode1024.oneframe.BuildConfig.VERSION_NAME
+        val release = UpdateRelease("v$version", version, "", "", 1, "a".repeat(64))
+        val installedApk = File(context.applicationInfo.sourceDir)
+        val error = runCatching { ApkVerifier.verify(context, installedApk, release) }.exceptionOrNull()
+        assertTrue("An installed or older version must never be offered as an update", error is java.io.IOException && error.message!!.contains("不高于"))
+        val dir = File(context.filesDir, "updates").apply { mkdirs() }
+        val file = File(dir, "provider-test.apk").apply { writeText("fixture") }
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", file)
+            assertEquals("content", uri.scheme)
+            assertEquals("fixture", context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() })
+        } finally { file.delete() }
     }
 
     @Test fun p5FastScalingKeepsSoftwareColorPathAndReportsSettings() {
