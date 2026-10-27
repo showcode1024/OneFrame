@@ -24,11 +24,15 @@ data class PlaybackState(
     val decoderDropped: Int = 0, val cacheSeconds: Double? = null, val waitingForCache: Boolean = false,
     val networkSource: Boolean = false, val decodePolicy: String = "", val hardwareApi: String = "",
     val fallbackReason: String = "",
+    val fallbackHardwareApi: String = "", val fallbackColorMatrix: String = "",
+    val experimentalHardware: Boolean = false, val fastScaling: Boolean = false,
+    val p5ColorStatus: String = "不适用",
     val tracks: List<MediaTrack> = emptyList(), val speed: Double = 1.0,
     val error: String? = null, val mpvVersion: String = "", val ffmpegVersion: String = "",
 )
 
-class MpvEngine(private val context: Context, private val software: Boolean) {
+class MpvEngine(private val context: Context, private val software: Boolean,
+    private val experimentalHardware: Boolean = false, private val fastScaling: Boolean = false) {
     private val handler = Handler(Looper.getMainLooper())
     private val statisticsThread = HandlerThread("OneFrame-statistics").apply { start() }
     private val statisticsHandler = Handler(statisticsThread.looper)
@@ -40,6 +44,8 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
     @Volatile private var released = false
     private var closed = false
     private var colorFallbackRequested = false
+    private var fallbackHardwareApi = ""
+    private var fallbackColorMatrix = ""
     private var desiredPause = false
     var onLoaded: (() -> Unit)? = null
     var onEnded: (() -> Unit)? = null
@@ -72,9 +78,11 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
             if (mpv != null || closed) return
             released = false
             colorFallbackRequested = false
+            fallbackHardwareApi = ""; fallbackColorMatrix = ""
             mutableState.value = PlaybackState(position = start,
                 networkSource = address.startsWith("https://") || address.startsWith("http://"),
-                decodePolicy = PlaybackPolicy.decoderPreference(software))
+                decodePolicy = PlaybackPolicy.decoderPreference(software, experimentalHardware),
+                experimentalHardware = experimentalHardware && !software, fastScaling = fastScaling)
             try {
                 val uri = Uri.parse(address)
                 require(uri.scheme in setOf("content", "file", "https", "http")) { "不支持此视频地址类型" }
@@ -97,12 +105,16 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
                 required("vo", "gpu-next")
                 required("gpu-api", "opengl")
                 required("gpu-context", "android")
-                required("hwdec", PlaybackPolicy.decoderPreference(software))
+                required("hwdec", PlaybackPolicy.decoderPreference(software, experimentalHardware))
                 required("target-prim", "bt.709")
                 required("target-trc", "bt.1886")
                 required("target-peak", "100")
                 required("target-colorspace-hint", "no")
                 required("tone-mapping", "bt.2390")
+                if (fastScaling) {
+                    // Reduce GPU scaling work without disabling Dolby metadata or tone mapping.
+                    required("scale", "bilinear"); required("dscale", "bilinear"); required("cscale", "bilinear")
+                }
                 required("audio-channels", "stereo")
                 required("ao", "audiotrack")
                 required("tls-verify", "yes")
@@ -174,9 +186,10 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
                 val renderer = instance.getPropertyString("current-vo").orEmpty()
                 val idle = instance.getPropertyBoolean("idle-active") ?: false
                 val matrix = instance.getPropertyString("video-params/colormatrix").orEmpty()
-                if (!software && !colorFallbackRequested && profile == 5 && width > 0 && renderer == "gpu-next"
-                    && hwdec.isNotBlank() && hwdec != "no" && matrix.isNotBlank() && matrix != "dolbyvision") {
+                if (!colorFallbackRequested && PlaybackPolicy.shouldFallbackP5(software, experimentalHardware,
+                    profile, width, renderer, hwdec, matrix)) {
                     colorFallbackRequested = true
+                    fallbackHardwareApi = hwdec; fallbackColorMatrix = matrix
                     instance.setPropertyString("hwdec", "no")
                 }
                 val waitingForCache = instance.getPropertyBoolean("paused-for-cache") == true
@@ -192,6 +205,8 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
                     decoder = if (codec.isBlank()) "等待视频" else if (hwdec.isBlank() || hwdec == "no") "CPU 软件解码" else "系统解码 · $hwdec",
                     hardwareApi = hwdec,
                     fallbackReason = if (colorFallbackRequested) "已请求 CPU 回退，以保留 P5 色彩处理" else "",
+                    fallbackHardwareApi = fallbackHardwareApi, fallbackColorMatrix = fallbackColorMatrix,
+                    p5ColorStatus = PlaybackPolicy.p5ColorStatus(profile, hwdec, matrix, experimentalHardware && !software),
                     video = if (width > 0) "$width × $height · $codec" else "等待视频信息",
                     audio = if (tracks.none { it.type == "audio" }) "无音轨" else PlaybackPolicy.audioSummary(audioCodec),
                     profile = profile, colorMatrix = matrix,
@@ -246,6 +261,9 @@ class MpvEngine(private val context: Context, private val software: Boolean) {
         put("decoder", data.decoder); put("renderer", data.renderer); put("video", data.video)
         put("requestedDecodePolicy", data.decodePolicy); put("activeDecodeApi", data.hardwareApi)
         put("fallbackReason", data.fallbackReason)
+        put("fallbackHardwareApi", data.fallbackHardwareApi); put("fallbackColorMatrix", data.fallbackColorMatrix)
+        put("experimentalHardware", data.experimentalHardware); put("fastScaling", data.fastScaling)
+        put("p5ColorStatus", data.p5ColorStatus); put("playbackSpeed", data.speed)
         put("dolbyVisionProfile", data.profile ?: JSONObject.NULL); put("colorMatrix", data.colorMatrix)
         put("output", data.output); put("audio", data.audio); put("fps", data.fps); put("droppedFrames", data.dropped)
         put("decoderDroppedFrames", data.decoderDropped); put("bufferedSecondsEstimate", data.cacheSeconds ?: JSONObject.NULL)

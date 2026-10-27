@@ -33,12 +33,17 @@ class PlayerSmokeTest {
     private var originalSession: String? = null
     private var originalSessions: String? = null
     private var originalSoftware = false
+    private var originalExperimentalHardware = false
+    private var originalFastScaling = false
     @Before fun isolatePreferences() {
         val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("prism", 0)
         originalSession = prefs.getString("session", null)
         originalSessions = prefs.getString("sessions", null)
         originalSoftware = prefs.getBoolean("software", false)
+        originalExperimentalHardware = prefs.getBoolean("p5_hardware_experiment", false)
+        originalFastScaling = prefs.getBoolean("fast_scaling", false)
         prefs.edit().remove("session").remove("sessions").commit()
+        prefs.edit().putBoolean("p5_hardware_experiment", false).putBoolean("fast_scaling", false).commit()
     }
     @After fun restorePreferences() {
         val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("prism", 0)
@@ -46,6 +51,8 @@ class PlayerSmokeTest {
             if (originalSession == null) remove("session") else putString("session", originalSession)
             if (originalSessions == null) remove("sessions") else putString("sessions", originalSessions)
             putBoolean("software", originalSoftware)
+            putBoolean("p5_hardware_experiment", originalExperimentalHardware)
+            putBoolean("fast_scaling", originalFastScaling)
         }.commit()
     }
 
@@ -64,6 +71,62 @@ class PlayerSmokeTest {
     @Test fun profileFiveUsesSoftwareDecodeAndLibplacebo() = verifyDolby("dolby-p5", 5, true)
     @Test fun profileEightOneUsesSoftwareDecodeAndLibplacebo() = verifyDolby("dolby-p81", 8, false)
     @Test fun profileEightFourUsesSoftwareDecodeAndLibplacebo() = verifyDolby("dolby-p84", 8, false)
+
+    @Test fun playbackOptionsAreOptInAndPersist() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        LocalStore(context).setSoftwareDecode(false)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.onNodeWithText("设置", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("p5Experiment").performScrollTo().assertIsOff().performClick().assertIsOn()
+            compose.onNodeWithTag("fastScaling").performScrollTo().assertIsOff().performClick().assertIsOn()
+            assertTrue(LocalStore(context).experimentalP5Hardware)
+            assertTrue(LocalStore(context).fastScaling)
+        }
+    }
+
+    @Test fun p5FastScalingKeepsSoftwareColorPathAndReportsSettings() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sample = File(context.cacheDir, "dolby-p5-fast.mp4").apply { writeBytes(sampleBytes("dolby-p5")) }
+        LocalStore(context).apply { setSoftwareDecode(true); setFastScaling(true); setExperimentalP5Hardware(true) }
+        val intent = Intent(context, PlayerActivity::class.java).putExtra("uri", sample.toURI().toString())
+            .putExtra("title", "P5 快速缩放测试").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<PlayerActivity>(intent).use { scenario ->
+            var snapshot = PlaybackState()
+            compose.waitUntil(45_000) {
+                scenario.onActivity { snapshot = it.playbackSnapshot }
+                snapshot.error != null || snapshot.ready && snapshot.position > .05
+            }
+            assertNull(snapshot.error)
+            assertEquals("no", snapshot.decodePolicy)
+            assertFalse(snapshot.experimentalHardware)
+            assertTrue(snapshot.fastScaling)
+            assertEquals("CPU 软件解码", snapshot.decoder)
+            assertTrue(snapshot.profile == 5 || snapshot.colorMatrix == "dolbyvision")
+            assertEquals("dolbyvision", snapshot.colorMatrix)
+            compose.onNodeWithTag("diagnostics").performClick()
+            compose.onNodeWithText("轻量双线性").performScrollTo().assertIsDisplayed()
+        }
+    }
+
+    @Test fun p5ExperimentalModeReportsActualDecoderWithoutClaimingColorAccuracy() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sample = File(context.cacheDir, "dolby-p5-experiment.mp4").apply { writeBytes(sampleBytes("dolby-p5")) }
+        LocalStore(context).apply { setSoftwareDecode(false); setExperimentalP5Hardware(true) }
+        val intent = Intent(context, PlayerActivity::class.java).putExtra("uri", sample.toURI().toString())
+            .putExtra("title", "P5 硬解实验测试").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<PlayerActivity>(intent).use { scenario ->
+            var snapshot = PlaybackState()
+            compose.waitUntil(45_000) {
+                scenario.onActivity { snapshot = it.playbackSnapshot }
+                snapshot.error != null || snapshot.ready && snapshot.position > .05
+            }
+            assertNull(snapshot.error)
+            assertTrue(snapshot.experimentalHardware)
+            assertEquals("mediacodec,mediacodec-copy,auto-copy", snapshot.decodePolicy)
+            assertTrue(snapshot.fallbackReason.isBlank())
+            if (snapshot.profile == 5) assertTrue(snapshot.p5ColorStatus.contains("未") || snapshot.p5ColorStatus.contains("偏色"))
+        }
+    }
 
     @Test fun networkPlaybackUsesAutomaticPolicyAndReportsActualDecodePath() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

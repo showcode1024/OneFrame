@@ -8,6 +8,20 @@ class PlaybackPolicyTest {
         assertEquals("mediacodec-copy,auto-copy", PlaybackPolicy.decoderPreference(false))
         assertEquals("no", PlaybackPolicy.decoderPreference(true))
     }
+    @Test fun p5HardwareExperimentMustBeExplicitAndSoftwareOverrideWins() {
+        assertEquals("mediacodec,mediacodec-copy,auto-copy", PlaybackPolicy.decoderPreference(false, true))
+        assertEquals("no", PlaybackPolicy.decoderPreference(true, true))
+        assertTrue(PlaybackPolicy.shouldFallbackP5(false, false, 5, 3840, "gpu-next", "mediacodec-copy", "bt.2020-ncl"))
+        assertFalse(PlaybackPolicy.shouldFallbackP5(false, true, 5, 3840, "gpu-next", "mediacodec-copy", "bt.2020-ncl"))
+        assertFalse(PlaybackPolicy.shouldFallbackP5(false, false, 5, 3840, "gpu-next", "mediacodec-copy", "dolbyvision"))
+        assertFalse(PlaybackPolicy.shouldFallbackP5(false, false, 8, 3840, "gpu-next", "mediacodec-copy", "bt.2020-ncl"))
+        assertFalse(PlaybackPolicy.shouldFallbackP5(false, false, 5, 3840, "gpu-next", "no", "bt.2020-ncl"))
+    }
+    @Test fun p5ExperimentNeverClaimsUnverifiedColorIsCorrect() {
+        assertTrue(PlaybackPolicy.p5ColorStatus(5, "mediacodec", "bt.2020-ncl", true).contains("可能严重偏色"))
+        assertTrue(PlaybackPolicy.p5ColorStatus(5, "mediacodec", "dolbyvision", true).contains("仍需验证"))
+        assertTrue(PlaybackPolicy.p5ColorStatus(5, "no", "dolbyvision", true).contains("尚未实测验证"))
+    }
     @Test fun progressUsesHundredNanosecondTicks() {
         assertEquals(125_000_000L, PlaybackPolicy.secondsToTicks(12.5))
         assertEquals(0L, PlaybackPolicy.secondsToTicks(Double.NaN))

@@ -22,7 +22,25 @@ data class StreamSource(
 
 object PlaybackPolicy {
     const val TICKS_PER_SECOND = 10_000_000L
-    fun decoderPreference(forceSoftware: Boolean): String = if (forceSoftware) "no" else "mediacodec-copy,auto-copy"
+    fun decoderPreference(forceSoftware: Boolean, experimentalHardware: Boolean = false): String = when {
+        forceSoftware -> "no"
+        experimentalHardware -> "mediacodec,mediacodec-copy,auto-copy"
+        else -> "mediacodec-copy,auto-copy"
+    }
+    fun shouldFallbackP5(software: Boolean, experimentalHardware: Boolean, profile: Int?, width: Int,
+        renderer: String, hwdec: String, matrix: String): Boolean =
+        !software && !experimentalHardware && profile == 5 && width > 0 && renderer == "gpu-next" &&
+            hwdec.isNotBlank() && hwdec != "no" && matrix.isNotBlank() && matrix != "dolbyvision"
+
+    fun p5ColorStatus(profile: Int?, hwdec: String, matrix: String, experimentalHardware: Boolean): String = when {
+        profile != 5 -> "不适用"
+        hwdec.isBlank() -> "等待解码器信息"
+        hwdec == "no" && matrix == "dolbyvision" -> "软解路径识别到杜比色彩数据；颜色尚未实测验证"
+        hwdec == "no" -> "软件解码中，杜比色彩状态未确认"
+        experimentalHardware && matrix != "dolbyvision" -> "实验系统解码未识别到杜比色彩数据，画面可能严重偏色"
+        experimentalHardware -> "实验系统解码检测到杜比色彩标记，实际颜色仍需验证"
+        else -> "杜比色彩状态未确认"
+    }
     fun secondsToTicks(seconds: Double): Long =
         if (!seconds.isFinite() || seconds < 0) 0 else
             (seconds.coerceAtMost(Long.MAX_VALUE.toDouble() / TICKS_PER_SECOND) * TICKS_PER_SECOND).toLong()

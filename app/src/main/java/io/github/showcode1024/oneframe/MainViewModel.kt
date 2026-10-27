@@ -29,12 +29,15 @@ data class HomeState(
     val versionsLoading: Boolean = false,
     val versionsError: String? = null,
     val servers: List<EmbySession> = emptyList(),
+    val experimentalP5Hardware: Boolean = false,
+    val fastScaling: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
     val api = EmbyClient(store.deviceId)
-    private val mutableState = MutableStateFlow(HomeState(store.session(), store.recents(), store.softwareDecode, servers = store.sessions()))
+    private val mutableState = MutableStateFlow(HomeState(store.session(), store.recents(), store.softwareDecode,
+        servers = store.sessions(), experimentalP5Hardware = store.experimentalP5Hardware, fastScaling = store.fastScaling))
     val state = mutableState.asStateFlow()
     private var libraryJob: Job? = null
     private var versionsJob: Job? = null
@@ -46,6 +49,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun softwareDecode(enabled: Boolean) {
         store.setSoftwareDecode(enabled)
         mutableState.update { it.copy(softwareDecode = enabled) }
+    }
+    fun experimentalP5Hardware(enabled: Boolean) {
+        store.setExperimentalP5Hardware(enabled); mutableState.update { it.copy(experimentalP5Hardware = enabled) }
+    }
+    fun fastScaling(enabled: Boolean) {
+        store.setFastScaling(enabled); mutableState.update { it.copy(fastScaling = enabled) }
     }
     fun forget(uri: String) { store.forget(uri); refreshRecents() }
     fun dismissError() { mutableState.update { it.copy(error = null) } }

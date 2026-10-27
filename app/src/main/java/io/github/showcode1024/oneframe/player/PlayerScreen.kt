@@ -50,6 +50,11 @@ import kotlinx.coroutines.delay
             })
         })
         if (state.buffering && state.error == null) CircularProgressIndicator(Modifier.align(Alignment.Center).size(42.dp), color = Mint)
+        if (state.experimentalHardware && state.profile == 5 && state.hardwareApi.isNotBlank() && state.hardwareApi != "no") {
+            Surface(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 65.dp), color = Color(0xD9904B00), shape = RoundedCornerShape(10.dp)) {
+                Text("P5 实验系统解码：色彩未验证，可能偏色", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = Color.White, fontSize = 11.sp)
+            }
+        }
         if (controls || state.paused || !state.ready) {
             Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .8f), Color.Transparent)))
@@ -76,7 +81,8 @@ import kotlinx.coroutines.delay
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .85f))))
                 .navigationBarsPadding().padding(horizontal = 24.dp, vertical = 18.dp)) {
-                Text(PlaybackPolicy.videoSummary(state.profile, state.colorMatrix), color = Mint, fontSize = 10.sp)
+                Text(if (state.experimentalHardware && state.profile == 5 && state.hardwareApi.isNotBlank() && state.hardwareApi != "no")
+                    "P5 实验系统解码 · 色彩未验证" else PlaybackPolicy.videoSummary(state.profile, state.colorMatrix), color = Mint, fontSize = 10.sp)
                 Spacer(Modifier.height(8.dp))
                 Slider(value = dragging ?: state.position.toFloat().coerceIn(0f, state.duration.toFloat().coerceAtLeast(1f)),
                     onValueChange = { dragging = it }, onValueChangeFinished = { dragging?.let { engine.seek(it.toDouble()) }; dragging = null },
@@ -103,13 +109,24 @@ import kotlinx.coroutines.delay
                 DiagnosticRow("视频", state.video)
                 if (versionName.isNotBlank()) DiagnosticRow("Emby 版本", versionName)
                 DiagnosticRow("解码", state.decoder)
-                DiagnosticRow("解码选择", if (state.decodePolicy == "no") "强制 CPU 软件解码" else "优先系统解码，失败后回退 CPU")
-                if (state.fallbackReason.isNotBlank()) DiagnosticRow("回退原因", state.fallbackReason)
+                val decodeLabel = when {
+                    state.decodePolicy == "no" -> "强制 CPU 软件解码"
+                    state.experimentalHardware -> "实验性系统直连，P5 不自动保色回退"
+                    else -> "优先系统解码，失败后回退 CPU"
+                }
+                DiagnosticRow("解码选择", decodeLabel)
+                if (state.fallbackReason.isNotBlank()) { DiagnosticRow("回退原因", state.fallbackReason) }
+                if (state.fallbackHardwareApi.isNotBlank()) {
+                    DiagnosticRow("回退前解码 / 色彩标记", "${state.fallbackHardwareApi} / ${state.fallbackColorMatrix}")
+                }
+                if (state.profile == 5) { DiagnosticRow("P5 色彩状态", state.p5ColorStatus) }
                 DiagnosticRow("渲染器", state.renderer)
+                DiagnosticRow("画面缩放", if (state.fastScaling) "轻量双线性" else "默认")
                 DiagnosticRow("杜比片源", state.profile?.let { "Profile $it" } ?: if (state.colorMatrix == "dolbyvision") "识别到杜比色彩数据" else "未检测到 Profile")
                 DiagnosticRow("输出目标", state.output)
                 DiagnosticRow("音频", state.audio)
                 DiagnosticRow("源帧率", "%.2f fps".format(state.fps))
+                DiagnosticRow("播放速度", "${state.speed}×")
                 DiagnosticRow("呈现丢帧 / 解码丢帧", "${state.dropped} / ${state.decoderDropped}")
                 if (state.networkSource) {
                     DiagnosticRow("网络缓冲估计", state.cacheSeconds?.let { "%.1f 秒".format(it) } ?: "当前不可用")

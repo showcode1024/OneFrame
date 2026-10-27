@@ -65,7 +65,7 @@ class PlayerActivity : ComponentActivity() {
         title = intent.getStringExtra("title") ?: "视频播放"
         local = intent.getBooleanExtra("local", false)
         position = savedInstanceState?.getDouble("position") ?: intent.getDoubleExtra("start", 0.0)
-        engine = MpvEngine(this, store.softwareDecode)
+        engine = MpvEngine(this, store.softwareDecode, store.experimentalP5Hardware, store.fastScaling)
         if (intent.hasExtra("itemId")) store.session()?.let { session ->
             reporter = EmbyReporter(EmbyClient(store.deviceId), session, StreamSource(address,
                 intent.getStringExtra("itemId")!!, intent.getStringExtra("mediaSourceId")!!,

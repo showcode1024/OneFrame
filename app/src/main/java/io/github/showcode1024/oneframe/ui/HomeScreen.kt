@@ -42,6 +42,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import io.github.showcode1024.oneframe.HomeState
 import io.github.showcode1024.oneframe.MainViewModel
 import io.github.showcode1024.oneframe.BuildConfig
@@ -106,7 +107,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
                 else Library(state.items, state.path.lastOrNull()?.title ?: "我的媒体库", state.search, state.loading, state.canLoadMore, state.path.isNotEmpty(),
                     state.session!!, model, { if (it.folder || it.type in listOf("Series", "Season", "CollectionFolder", "BoxSet")) model.openFolder(it) else model.openDetail(it) })
                 1 -> LocalLibrary(state.recents, pickFile, { urlDialog = true }, playRecent, model::forget)
-                2 -> Settings(state.softwareDecode, model::softwareDecode, state.session, state.servers, { login = true }, model::switchServer, model::removeServer)
+                2 -> Settings(state.softwareDecode, model::softwareDecode, state.experimentalP5Hardware, model::experimentalP5Hardware,
+                    state.fastScaling, model::fastScaling, state.session, state.servers, { login = true }, model::switchServer, model::removeServer)
             }
         }
         }
@@ -372,7 +374,8 @@ private fun versionSummary(version: MediaVersion): String = buildList {
     }
 }
 
-@Composable private fun Settings(software: Boolean, setSoftware: (Boolean) -> Unit, session: EmbySession?, servers: List<EmbySession>,
+@Composable private fun Settings(software: Boolean, setSoftware: (Boolean) -> Unit, experimentalHardware: Boolean,
+    setExperimentalHardware: (Boolean) -> Unit, fastScaling: Boolean, setFastScaling: (Boolean) -> Unit, session: EmbySession?, servers: List<EmbySession>,
     connect: () -> Unit, switch: (EmbySession) -> Unit, remove: (EmbySession) -> Unit) {
     var removing by remember { mutableStateOf<EmbySession?>(null) }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -384,6 +387,23 @@ private fun versionSummary(version: MediaVersion): String = buildList {
                     Text("默认关闭，优先尝试系统解码底层视频，杜比色彩映射仍由播放器完成。色彩异常时可开启 CPU 软解；高分辨率软解可能卡顿。修改后需重新打开视频。", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
                 }
                 Switch(software, setSoftware)
+            }
+            HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("实验性系统直连解码")
+                    Text("优先尝试系统直连，P5 不再自动回退软解。可能偏绿、偏紫或无法播放，颜色没有经过验证；其他视频也会尝试直连。关闭后恢复保色回退。需重新打开视频。", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
+                    if (software) Text("请先关闭强制 CPU 软件解码。", color = Mint, fontSize = 12.sp)
+                }
+                Switch(experimentalHardware, setExperimentalHardware, modifier = Modifier.testTag("p5Experiment"), enabled = !software)
+            }
+            HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("轻量画面缩放")
+                    Text("降低画面缩放的 GPU 负载，保留杜比色彩映射；细节可能略有变化，对 CPU 解码瓶颈不一定有效。需重新打开视频。", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
+                }
+                Switch(fastScaling, setFastScaling, modifier = Modifier.testTag("fastScaling"))
             }
             HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 18.dp))
             Text("画面输出", fontSize = 14.sp)

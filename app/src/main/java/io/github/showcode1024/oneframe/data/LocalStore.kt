@@ -17,6 +17,10 @@ class LocalStore(context: Context) {
     private val preferences = context.getSharedPreferences("prism", Context.MODE_PRIVATE)
     val softwareDecode: Boolean get() = preferences.getBoolean("software", false)
     fun setSoftwareDecode(value: Boolean) { preferences.edit().putBoolean("software", value).apply() }
+    val experimentalP5Hardware: Boolean get() = preferences.getBoolean("p5_hardware_experiment", false)
+    fun setExperimentalP5Hardware(value: Boolean) { preferences.edit().putBoolean("p5_hardware_experiment", value).apply() }
+    val fastScaling: Boolean get() = preferences.getBoolean("fast_scaling", false)
+    fun setFastScaling(value: Boolean) { preferences.edit().putBoolean("fast_scaling", value).apply() }
 
     fun recents(): List<RecentMedia> = runCatching {
         val values = JSONArray(preferences.getString("recents", "[]"))
