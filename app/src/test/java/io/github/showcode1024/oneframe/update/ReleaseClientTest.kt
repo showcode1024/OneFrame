@@ -1,7 +1,6 @@
 package io.github.showcode1024.oneframe.update
 
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONArray
@@ -9,8 +8,6 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.Assume.assumeTrue
-import java.io.File
-import java.security.MessageDigest
 
 class ReleaseClientTest {
     private fun release(version: String, prerelease: Boolean = true, digest: String = "sha256:" + "a".repeat(64)): JSONObject {
@@ -46,19 +43,6 @@ class ReleaseClientTest {
         assertThrows(java.io.IOException::class.java) { ReleaseParser.select(JSONArray().put(bad), "0.1.5-alpha") }
     }
 
-    @Test fun rejectsWrongPackageVersionOrSigningIdentity() {
-        val cert = setOf(ApkIdentityPolicy.PROJECT_CERT_SHA256)
-        fun verify(packageName: String = "dev.prism.player", version: String = "0.1.6-alpha", code: Long = 7,
-            archiveSigners: Set<String> = cert, installedSigners: Set<String> = cert) =
-            ApkIdentityPolicy.verify("dev.prism.player", 6, installedSigners, "0.1.6-alpha", packageName, version, code, archiveSigners)
-        verify()
-        assertThrows(java.io.IOException::class.java) { verify(packageName = "other.app") }
-        assertThrows(java.io.IOException::class.java) { verify(version = "0.1.5-alpha") }
-        assertThrows(java.io.IOException::class.java) { verify(code = 6) }
-        assertThrows(java.io.IOException::class.java) { verify(archiveSigners = setOf("wrong")) }
-        assertThrows(java.io.IOException::class.java) { verify(installedSigners = setOf("debug-key")) }
-    }
-
     @Test fun checksGithubListAndReportsRateLimit() = runBlocking {
         MockWebServer().use { server ->
             server.start()
@@ -70,57 +54,10 @@ class ReleaseClientTest {
         }
     }
 
-    @Test fun downloadVerifiesSizeAndHashAndCleansIncompleteFile() = runBlocking {
-        val payload = "APK fixture".toByteArray()
-        val sha = MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") { "%02x".format(it) }
-        MockWebServer().use { server ->
-            server.start()
-            val client = ReleaseClient(downloadClient = OkHttpClient.Builder().followRedirects(false).build(), trustedDownload = { it.host == server.hostName })
-            val update = UpdateRelease("v0.1.6-alpha", "0.1.6-alpha", "", server.url("/file").toString(), payload.size.toLong(), sha)
-            val file = File.createTempFile("oneframe-update-test", ".apk")
-            try {
-                server.enqueue(MockResponse().setBody(okio.Buffer().write(payload)))
-                assertEquals(file, client.download(update, file) { _, _ -> })
-                assertArrayEquals(payload, file.readBytes())
-                server.enqueue(MockResponse().setBody("wrong data!"))
-                assertTrue(runCatching { client.download(update, file) { _, _ -> } }.isFailure)
-                assertFalse(file.exists())
-                server.enqueue(MockResponse().setBody("short"))
-                assertTrue(runCatching { client.download(update, file) { _, _ -> } }.isFailure)
-                assertFalse(file.exists())
-            } finally { file.delete() }
-        }
-    }
-
-    @Test fun productionDownloaderRejectsNonHttpsUrls() = runBlocking {
-        val file = File.createTempFile("oneframe-update-test", ".apk")
-        val update = UpdateRelease("v0.1.6-alpha", "0.1.6-alpha", "", "http://127.0.0.1:9/file", 1, "a".repeat(64))
-        assertTrue(runCatching { ReleaseClient().download(update, file) { _, _ -> } }.isFailure)
-        assertFalse(file.exists())
-    }
-
-    @Test fun downloaderChecksRedirectDestinationBeforeFollowingIt() = runBlocking {
-        MockWebServer().use { server ->
-            server.start()
-            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://untrusted.example/file"))
-            val client = ReleaseClient(downloadClient = OkHttpClient.Builder().followRedirects(false).build(), trustedDownload = { it.host == server.hostName })
-            val file = File.createTempFile("oneframe-update-test", ".apk")
-            val update = UpdateRelease("v0.1.6-alpha", "0.1.6-alpha", "", server.url("/file").toString(), 1, "a".repeat(64))
-            val error = runCatching { client.download(update, file) { _, _ -> } }.exceptionOrNull()
-            assertTrue(error is java.io.IOException && error.message!!.contains("不受信任"))
-            assertEquals(1, server.requestCount)
-            assertFalse(file.exists())
-        }
-    }
-
-    @Test fun liveGithubReleaseDownloadsAndVerifiesWhenExplicitlyEnabled() = runBlocking {
+    @Test fun liveGithubReleaseCheckWhenExplicitlyEnabled() = runBlocking {
         assumeTrue(System.getenv("ONEFRAME_LIVE_UPDATE_TEST") == "1")
-        val client = ReleaseClient()
-        val update = client.check("0.1.3-alpha")!!
-        val file = File.createTempFile("oneframe-live-release", ".apk")
-        try {
-            client.download(update, file) { _, _ -> }
-            assertEquals(update.size, file.length())
-        } finally { file.delete() }
+        val update = ReleaseClient().check("0.1.3-alpha")!!
+        assertTrue(update.apkUrl.startsWith("https://github.com/showcode1024/OneFrame/releases/download/"))
+        assertTrue(update.size > 0)
     }
 }

@@ -90,6 +90,8 @@ jobs:
         run: |
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          # Stage this release while its exact signed APK is checked with Play Protect.
+          if [[ "$RELEASE_TAG" == "v0.1.6-alpha" ]]; then flags+=(--draft); fi
           gh release create "$RELEASE_TAG" dist/*.apk dist/*.sha256 \
             --verify-tag --title "OneFrame $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md" "${flags[@]}"

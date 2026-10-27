@@ -1,17 +1,12 @@
 package io.github.showcode1024.oneframe.update
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
-import java.io.File
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 private const val MAX_APK_SIZE = 300L * 1024 * 1024
@@ -52,17 +47,6 @@ data class ReleaseVersion(val major: Long, val minor: Long, val patch: Long, val
 
 data class UpdateRelease(val tag: String, val version: String, val notes: String, val apkUrl: String, val size: Long, val sha256: String)
 
-object ApkIdentityPolicy {
-    const val PROJECT_CERT_SHA256 = "ae3e199d610ac48d0e19cfa6b75d435645c8d45f7e481c1297a2bc6bd225ae9f"
-    fun verify(packageName: String, installedCode: Long, installedSigners: Set<String>, releaseVersion: String,
-        archivePackage: String, archiveVersion: String?, archiveCode: Long, archiveSigners: Set<String>) {
-        if (archivePackage != packageName || archiveVersion != releaseVersion) throw IOException("安装包的应用标识或版本不匹配")
-        if (archiveCode <= installedCode) throw IOException("安装包版本不高于当前版本")
-        if (archiveSigners != setOf(PROJECT_CERT_SHA256)) throw IOException("安装包签名与 OneFrame 发布签名不匹配")
-        if (installedSigners != setOf(PROJECT_CERT_SHA256)) throw IOException("当前安装包签名与正式发布包不同，无法直接覆盖升级")
-    }
-}
-
 object ReleaseParser {
     fun select(releases: JSONArray, current: String): UpdateRelease? {
         val installed = ReleaseVersion.parse(current) ?: throw IOException("当前版本号无法识别")
@@ -96,12 +80,6 @@ object ReleaseParser {
 class ReleaseClient(
     private val apiClient: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(25, TimeUnit.SECONDS).followRedirects(false).build(),
     private val apiUrl: String = "https://api.github.com/repos/showcode1024/OneFrame/releases?per_page=100",
-    private val downloadClient: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS)
-        .followRedirects(false).followSslRedirects(false).build(),
-    private val trustedDownload: (HttpUrl) -> Boolean = { url ->
-        url.scheme == "https" && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() &&
-            url.host in setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com")
-    },
 ) {
     suspend fun check(current: String): UpdateRelease? = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(apiUrl).header("Accept", "application/vnd.github+json")
@@ -116,46 +94,4 @@ class ReleaseClient(
         }
     }
 
-    suspend fun download(release: UpdateRelease, temporary: File, progress: (Long, Long) -> Unit): File = withContext(Dispatchers.IO) {
-        temporary.parentFile?.mkdirs()
-        try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            var count = 0L
-            var currentUrl = release.apkUrl.toHttpUrl()
-            var redirects = 0
-            while (true) {
-                if (!trustedDownload(currentUrl)) throw IOException("安装包下载地址不受信任")
-                val request = Request.Builder().url(currentUrl).header("User-Agent", "OneFrame-Android").build()
-                val response = downloadClient.newCall(request).execute()
-                if (response.isRedirect) {
-                    val next = response.header("Location")?.let { currentUrl.resolve(it) }
-                    response.close()
-                    if (next == null || ++redirects > 5) throw IOException("安装包下载重定向异常")
-                    currentUrl = next
-                    continue
-                }
-                response.use {
-                if (!response.isSuccessful) throw IOException("下载失败（${response.code}）")
-                val body = response.body ?: throw IOException("安装包为空")
-                temporary.outputStream().buffered().use { out ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            currentCoroutineContext().ensureActive()
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            count += n
-                            if (count > release.size || count > MAX_APK_SIZE) throw IOException("安装包大小异常")
-                            digest.update(buffer, 0, n); out.write(buffer, 0, n); progress(count, release.size)
-                        }
-                    }
-                }
-                }
-                break
-            }
-            if (count != release.size || digest.digest().joinToString("") { "%02x".format(it) } != release.sha256)
-                throw IOException("安装包校验失败，请重试")
-            temporary
-        } catch (error: Exception) { temporary.delete(); throw error }
-    }
 }

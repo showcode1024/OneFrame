@@ -10,9 +10,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.showcode1024.oneframe.data.LocalStore
 import io.github.showcode1024.oneframe.data.EmbySession
-import io.github.showcode1024.oneframe.update.ApkVerifier
-import io.github.showcode1024.oneframe.update.UpdateRelease
-import androidx.core.content.FileProvider
 import io.github.showcode1024.oneframe.player.PlaybackState
 import io.github.showcode1024.oneframe.player.PlayerActivity
 import org.junit.Assert.*
@@ -106,21 +103,6 @@ class PlayerSmokeTest {
         }
     }
 
-    @Test fun updaterRejectsInstalledVersionAndProvidesPrivateApkUri() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val version = io.github.showcode1024.oneframe.BuildConfig.VERSION_NAME
-        val release = UpdateRelease("v$version", version, "", "", 1, "a".repeat(64))
-        val installedApk = File(context.applicationInfo.sourceDir)
-        val error = runCatching { ApkVerifier.verify(context, installedApk, release) }.exceptionOrNull()
-        assertTrue("An installed or older version must never be offered as an update", error is java.io.IOException && error.message!!.contains("不高于"))
-        val dir = File(context.filesDir, "updates").apply { mkdirs() }
-        val file = File(dir, "provider-test.apk").apply { writeText("fixture") }
-        try {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", file)
-            assertEquals("content", uri.scheme)
-            assertEquals("fixture", context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() })
-        } finally { file.delete() }
-    }
 
     @Test fun p5FastScalingKeepsSoftwareColorPathAndReportsSettings() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
