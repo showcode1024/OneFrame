@@ -8,6 +8,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import io.github.showcode1024.oneframe.data.LocalStore
 import io.github.showcode1024.oneframe.data.EmbySession
 import io.github.showcode1024.oneframe.player.PlaybackState
@@ -65,7 +67,8 @@ class PlayerSmokeTest {
     @Test fun launchHomeAndOpenLocalLibrary() {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithText("OneFrame").assertIsDisplayed()
-            compose.onNodeWithText("从一部\n好电影开始").assertIsDisplayed()
+            compose.onNodeWithText("欢迎来到 OneFrame").assertIsDisplayed()
+            compose.onNodeWithText("属于你的私人影院").assertIsDisplayed()
             screenshot("home-phone")
             compose.onNodeWithText("本地", useUnmergedTree = true).performClick()
             compose.onNodeWithText("本地片库").assertIsDisplayed()
@@ -216,13 +219,19 @@ class PlayerSmokeTest {
         prefs.edit().remove("session").remove("sessions").commit()
         val bytes = sampleBytes("dolby-p5")
         val requests = Collections.synchronizedList(mutableListOf<String>())
+        val subtitleRequests = Collections.synchronizedList(mutableListOf<RecordedRequest>())
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val path = request.requestUrl!!.encodedPath
                     if (path.endsWith("/PlaybackInfo")) {
                         requests.add(request.body.readUtf8())
-                        return MockResponse().setBody("""{"PlaySessionId":"play-selected","MediaSources":[{"Id":"first","Name":"1080p 测试版","SupportsDirectPlay":true},{"Id":"second","Name":"4K 测试版","SupportsDirectStream":true,"MediaStreams":[{"Type":"Video","Width":3840,"Height":2160,"Codec":"hevc"}]}]}""")
+                        return MockResponse().setBody("""{"PlaySessionId":"play-selected","MediaSources":[{"Id":"first","Name":"1080p 测试版","SupportsDirectPlay":true,"MediaStreams":[{"Type":"Subtitle","Index":2,"IsExternal":true,"IsTextSubtitleStream":true,"DisplayTitle":"其他版本字幕"}]},{"Id":"second","Name":"4K 测试版","SupportsDirectStream":true,"MediaStreams":[{"Type":"Video","Width":3840,"Height":2160,"Codec":"hevc"},{"Type":"Subtitle","Index":3,"IsExternal":true,"IsTextSubtitleStream":true,"Language":"chi","DisplayTitle":"简体中文字幕"}]}]}""")
+                    }
+                    if (path.contains("/Subtitles/")) {
+                        subtitleRequests.add(request)
+                        return MockResponse().setHeader("Content-Type", "application/x-subrip")
+                            .setBody("1\n00:00:00,000 --> 00:00:05,000\nExternal subtitle test\n")
                     }
                     if (path.endsWith("/stream")) {
                         requests.add("stream:" + request.requestUrl!!.queryParameter("MediaSourceId"))
@@ -253,6 +262,31 @@ class PlayerSmokeTest {
                     compose.onNodeWithText("播放", useUnmergedTree = true).performScrollTo().performClick()
                     compose.waitUntil(45_000) { requests.any { it == "stream:second" } }
                     assertTrue(requests.any { it.startsWith("{") && JSONObject(it).optBoolean("IsPlayback") && JSONObject(it).optString("MediaSourceId") == "second" })
+                    compose.waitUntil(45_000) {
+                        var ready = false
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                            ready = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                                .filterIsInstance<PlayerActivity>().any { it.playbackSnapshot.ready }
+                        }
+                        ready
+                    }
+                    // Controls may have auto-hidden while the decoder initialized.
+                    if (compose.onAllNodesWithContentDescription("字幕与音轨").fetchSemanticsNodes().isEmpty()) {
+                        compose.onNodeWithTag("videoGestures").performTouchInput { click() }
+                    }
+                    compose.onNodeWithContentDescription("字幕与音轨").performClick()
+                    compose.onNodeWithText("Emby 外挂字幕").assertExists()
+                    compose.onNodeWithTag("serverSubtitle-2").assertDoesNotExist()
+                    compose.onNodeWithTag("serverSubtitle-3").performScrollTo().performClick()
+                    compose.waitUntil(20_000) { subtitleRequests.isNotEmpty() }
+                    val subtitleRequest = subtitleRequests.first()
+                    assertEquals("/Videos/movie/second/Subtitles/3/Stream.srt", subtitleRequest.requestUrl!!.encodedPath)
+                    assertEquals("test-token", subtitleRequest.getHeader("X-Emby-Token"))
+                    assertTrue(subtitleRequest.getHeader("Authorization")!!.startsWith("Emby "))
+                    assertNull(subtitleRequest.requestUrl!!.queryParameter("api_key"))
+                    compose.waitUntil(20_000) {
+                        compose.onAllNodesWithText("✓  Emby · 简体中文字幕", substring = true).fetchSemanticsNodes().isNotEmpty()
+                    }
                     InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                 }
             } finally { prefs.edit().remove("session").remove("sessions").commit() }

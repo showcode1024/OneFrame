@@ -12,12 +12,18 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState as SystemPlaybackState
 import android.os.Bundle
+import android.net.Uri
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -25,10 +31,13 @@ import androidx.lifecycle.lifecycleScope
 import io.github.showcode1024.oneframe.data.*
 import io.github.showcode1024.oneframe.ui.OneFrameTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
+import org.json.JSONArray
+import org.json.JSONObject
 
 class PlayerActivity : ComponentActivity() {
     companion object {
@@ -37,16 +46,21 @@ class PlayerActivity : ComponentActivity() {
                 .putExtra("title", title).putExtra("start", start).putExtra("local", local))
         }
         fun openEmby(context: Context, source: StreamSource) {
+            val subtitles = JSONArray().apply { source.externalSubtitles.take(100).forEach {
+                put(JSONObject().put("index", it.index).put("title", it.title).put("language", it.language))
+            } }
             context.startActivity(Intent(context, PlayerActivity::class.java).putExtra("uri", source.url)
                 .putExtra("title", source.title).putExtra("start", source.startSeconds)
                 .putExtra("itemId", source.itemId).putExtra("mediaSourceId", source.mediaSourceId)
-                .putExtra("playSessionId", source.playSessionId).putExtra("versionName", source.versionName))
+                .putExtra("playSessionId", source.playSessionId).putExtra("versionName", source.versionName)
+                .putExtra("serverSubtitles", subtitles.toString()))
         }
     }
     private lateinit var engine: MpvEngine
     private lateinit var store: LocalStore
     private lateinit var mediaSession: MediaSession
     private lateinit var audioManager: AudioManager
+    private lateinit var displayControls: PlayerDisplayControls
     private lateinit var focus: AudioFocusRequest
     private var address = ""
     private var title = ""
@@ -56,6 +70,17 @@ class PlayerActivity : ComponentActivity() {
     private var relay: StreamRelay? = null
     private var focusHeld = false
     private var resumeAfterFocus = false
+    private var subtitleLoading by mutableStateOf(false)
+    private var subtitlePickerWasPlaying = false
+    private var resumeAfterSubtitlePicker = false
+    private var embySession: EmbySession? = null
+    private var serverSubtitles: List<EmbySubtitle> = emptyList()
+    private val subtitlePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        resumeAfterSubtitlePicker = subtitlePickerWasPlaying
+        subtitlePickerWasPlaying = false
+        resumeSubtitlePlaybackIfNeeded()
+        if (uri != null) loadSubtitle { SubtitleFiles.importLocal(this, uri) }
+    }
     val playbackSnapshot: PlaybackState get() = engine.state.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,7 +91,21 @@ class PlayerActivity : ComponentActivity() {
         local = intent.getBooleanExtra("local", false)
         position = savedInstanceState?.getDouble("position") ?: intent.getDoubleExtra("start", 0.0)
         engine = MpvEngine(this, store.softwareDecode, store.experimentalP5Hardware, store.fastScaling)
+        savedInstanceState?.getString("videoSizing")?.let { name ->
+            runCatching { VideoSizing.valueOf(name) }.getOrNull()?.let { engine.videoSizing(it) }
+        }
+        displayControls = PlayerDisplayControls(this)
+        if (savedInstanceState?.containsKey("windowBrightness") == true) {
+            savedInstanceState.getFloat("windowBrightness").takeIf { it >= 0f }?.let { displayControls.brightness(it) }
+        }
         if (intent.hasExtra("itemId")) store.session()?.let { session ->
+            embySession = session
+            serverSubtitles = runCatching { val array = JSONArray(intent.getStringExtra("serverSubtitles") ?: "[]")
+                (0 until minOf(array.length(), 100)).mapNotNull { index -> array.optJSONObject(index)?.let { value ->
+                    val trackIndex = value.optInt("index", -1)
+                    if (trackIndex < 0) null else EmbySubtitle(trackIndex, value.optString("title", "字幕").take(100), value.optString("language").take(30))
+                } }
+            }.getOrDefault(emptyList())
             reporter = EmbyReporter(EmbyClient(store.deviceId), session, StreamSource(address,
                 intent.getStringExtra("itemId")!!, intent.getStringExtra("mediaSourceId")!!,
                 intent.getStringExtra("playSessionId")!!, title, position))
@@ -84,6 +123,7 @@ class PlayerActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setupAudio()
+        volumeControlStream = AudioManager.STREAM_MUSIC
         setupSession()
         engine.onLoaded = { reporter?.send("Start", engine.state.value) }
         engine.onEnded = { reporter?.send("Stop", engine.state.value); savePosition(completed = true) }
@@ -97,7 +137,11 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         setContent { OneFrameTheme { PlayerScreen(title, engine, versionName = intent.getStringExtra("versionName").orEmpty(),
-            surface = { surfaceView() }, close = { finish() },
+            surface = { surfaceView() }, displayControls = displayControls, close = { finish() },
+            serverSubtitles = serverSubtitles, subtitleLoading = subtitleLoading,
+            pickSubtitle = { subtitlePickerWasPlaying = !engine.state.value.paused
+                subtitlePicker.launch(arrayOf("text/*", "application/x-subrip", "application/octet-stream", "*/*")) },
+            loadServerSubtitle = ::loadServerSubtitle,
             rotate = { requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE },
             copyDiagnostics = {
@@ -106,12 +150,46 @@ class PlayerActivity : ComponentActivity() {
         ) } }
     }
 
+    private fun loadSubtitle(acquire: suspend () -> SubtitleFile) {
+        if (subtitleLoading) return
+        subtitleLoading = true
+        lifecycleScope.launch {
+            try {
+                val subtitle = acquire()
+                engine.addSubtitle(subtitle) { error ->
+                    subtitleLoading = false
+                    if (!isFinishing && !isDestroyed) Toast.makeText(this@PlayerActivity, error ?: "字幕已添加", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                subtitleLoading = false
+                val message = e.message?.takeIf { it.any { ch -> ch in '\u4e00'..'\u9fff' } && it.length < 120 } ?: "无法读取字幕，请重试"
+                Toast.makeText(this@PlayerActivity, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun loadServerSubtitle(subtitle: EmbySubtitle) {
+        val session = embySession ?: return
+        val itemId = intent.getStringExtra("itemId") ?: return
+        val sourceId = intent.getStringExtra("mediaSourceId") ?: return
+        if (serverSubtitles.none { it.index == subtitle.index }) return
+        loadSubtitle {
+            val bytes = EmbyClient(store.deviceId).subtitle(session, itemId, sourceId, subtitle.index)
+            SubtitleFiles.importServer(this, bytes, "Emby · ${subtitle.title}")
+        }
+    }
+
+    private fun resumeSubtitlePlaybackIfNeeded() {
+        if (resumeAfterSubtitlePicker && focusHeld) { resumeAfterSubtitlePicker = false; engine.pause(false) }
+    }
+
     private fun surfaceView(): SurfaceView = SurfaceView(this).apply {
         holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 engine.start(holder.surface, address, position)
             }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { engine.surfaceSize(width, height) }
             override fun surfaceDestroyed(holder: SurfaceHolder) { savePosition(); engine.release() }
         })
     }
@@ -162,13 +240,19 @@ class PlayerActivity : ComponentActivity() {
         super.onResume()
         focusHeld = audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (!focusHeld) engine.pause(true)
+        else resumeSubtitlePlaybackIfNeeded()
     }
     override fun onStop() {
         savePosition(); engine.pause(true)
         audioManager.abandonAudioFocusRequest(focus); focusHeld = false; resumeAfterFocus = false
         super.onStop()
     }
-    override fun onSaveInstanceState(outState: Bundle) { savePosition(); outState.putDouble("position", position); super.onSaveInstanceState(outState) }
+    override fun onSaveInstanceState(outState: Bundle) {
+        savePosition(); outState.putDouble("position", position)
+        outState.putFloat("windowBrightness", window.attributes.screenBrightness)
+        outState.putString("videoSizing", engine.state.value.videoSizing.name)
+        super.onSaveInstanceState(outState)
+    }
     override fun onDestroy() {
         reporter?.close(engine.state.value)
         engine.close(); relay?.close(); mediaSession.release()

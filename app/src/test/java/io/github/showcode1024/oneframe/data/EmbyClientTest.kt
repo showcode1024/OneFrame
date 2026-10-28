@@ -41,6 +41,44 @@ class EmbyClientTest {
         assertEquals("parent/with slash", request.requestUrl!!.queryParameter("ParentId"))
         assertFalse(request.path!!.contains("private-token"))
     }
+    @Test fun parsesFavoriteFromServerUserDataAndDefaultsToFalse() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"one","Name":"One","UserData":{"IsFavorite":true}},{"Id":"two","Name":"Two"}]}"""))
+        val items = api.items(session, "parent")
+        assertTrue(items[0].favorite)
+        assertFalse(items[1].favorite)
+    }
+    @Test fun favoriteCollectionIsRequestedFromEmbyWithUserAuthentication() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"movie","Name":"Movie","Type":"Movie"}]}"""))
+        val items = api.favorites(session)
+        assertEquals(1, items.size)
+        assertTrue(items.single().favorite)
+        val request = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertTrue(request.path!!.startsWith("/reverse/emby/Users/user-id/Items?"))
+        assertEquals("true", request.requestUrl!!.queryParameter("IsFavorite"))
+        assertEquals("true", request.requestUrl!!.queryParameter("Recursive"))
+        assertEquals("Movie,Series,Episode,Video", request.requestUrl!!.queryParameter("IncludeItemTypes"))
+        assertEquals("private-token", request.getHeader("X-Emby-Token"))
+        assertFalse(request.path!!.contains("private-token"))
+    }
+    @Test fun favoriteUsesCorrectMethodsAndReturnsServerState() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"IsFavorite":true}"""))
+        assertTrue(api.setFavorite(session, "item/with slash", true))
+        val add = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", add.method)
+        assertEquals("/reverse/emby/Users/user-id/FavoriteItems/item%2Fwith%20slash", add.path)
+        assertEquals("private-token", add.getHeader("X-Emby-Token"))
+        assertFalse(add.path!!.contains("private-token"))
+        server.enqueue(MockResponse().setBody("""{"IsFavorite":false}"""))
+        assertFalse(api.setFavorite(session, "item/with slash", false))
+        val remove = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("DELETE", remove.method)
+        assertEquals(add.path, remove.path)
+        assertEquals("private-token", remove.getHeader("X-Emby-Token"))
+        server.enqueue(MockResponse().setBody("""{"IsFavorite":false}"""))
+        assertFalse(api.setFavorite(session, "item", true))
+        server.enqueue(MockResponse().setResponseCode(403))
+        assertTrue(runCatching { api.setFavorite(session, "item", true) }.exceptionOrNull() is EmbyException)
+    }
     @Test fun loginDoesNotFollowRedirectsWithCredentials() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/untrusted")))
         val error = runCatching { api.login(session.baseUrl, "user", "password") }.exceptionOrNull()

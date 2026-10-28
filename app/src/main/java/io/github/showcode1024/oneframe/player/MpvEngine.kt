@@ -28,11 +28,18 @@ data class PlaybackState(
     val experimentalHardware: Boolean = false, val fastScaling: Boolean = false,
     val p5ColorStatus: String = "不适用",
     val tracks: List<MediaTrack> = emptyList(), val speed: Double = 1.0,
+    val videoSizing: VideoSizing = VideoSizing.FIT,
+    val appliedPanscan: Double? = null,
     val error: String? = null, val mpvVersion: String = "", val ffmpegVersion: String = "",
 )
 
 class MpvEngine(private val context: Context, private val software: Boolean,
     private val experimentalHardware: Boolean = false, private val fastScaling: Boolean = false) {
+    private sealed interface SubtitleSelection {
+        data object Off : SubtitleSelection
+        data class Embedded(val id: Int) : SubtitleSelection
+        data class External(val subtitle: SubtitleFile) : SubtitleSelection
+    }
     private val handler = Handler(Looper.getMainLooper())
     private val statisticsThread = HandlerThread("OneFrame-statistics").apply { start() }
     private val statisticsHandler = Handler(statisticsThread.looper)
@@ -41,12 +48,19 @@ class MpvEngine(private val context: Context, private val software: Boolean,
     val state = mutableState.asStateFlow()
     private var mpv: MPVLib? = null
     private var descriptor: ParcelFileDescriptor? = null
+    private val addedSubtitles = mutableListOf<SubtitleFile>()
+    private val externalSubtitleTracks = mutableMapOf<Int, SubtitleFile>()
+    private var savedSubtitleSelection: SubtitleSelection? = null
     @Volatile private var released = false
     private var closed = false
     private var colorFallbackRequested = false
+    private var desiredSizing = VideoSizing.FIT
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
     private var fallbackHardwareApi = ""
     private var fallbackColorMatrix = ""
     private var desiredPause = false
+    private var desiredSpeed = 1.0
     var onLoaded: (() -> Unit)? = null
     var onEnded: (() -> Unit)? = null
     var onInteraction: ((String) -> Unit)? = null
@@ -61,7 +75,13 @@ class MpvEngine(private val context: Context, private val software: Boolean,
             handler.post {
                 if (released) return@post
                 when (eventId) {
-                    MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> { poll(); onLoaded?.invoke() }
+                    MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
+                        applySizing(); poll()
+                        statisticsHandler.post { synchronized(nativeLock) {
+                            if (!released) restoreSubtitles()
+                        } }
+                        onLoaded?.invoke()
+                    }
                     MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
                         poll()
                         if (state.value.duration > 0 && state.value.position >= state.value.duration - 2) onEnded?.invoke()
@@ -79,7 +99,7 @@ class MpvEngine(private val context: Context, private val software: Boolean,
             released = false
             colorFallbackRequested = false
             fallbackHardwareApi = ""; fallbackColorMatrix = ""
-            mutableState.value = PlaybackState(position = start,
+            mutableState.value = PlaybackState(position = start, videoSizing = desiredSizing, speed = desiredSpeed,
                 networkSource = address.startsWith("https://") || address.startsWith("http://"),
                 decodePolicy = PlaybackPolicy.decoderPreference(software, experimentalHardware),
                 experimentalHardware = experimentalHardware && !software, fastScaling = fastScaling)
@@ -135,6 +155,8 @@ class MpvEngine(private val context: Context, private val software: Boolean,
                 instance.attachSurface(surface)
                 instance.addObserver(observer)
                 instance.init()
+                applySizing()
+                instance.setPropertyDouble("speed", desiredSpeed)
                 instance.command(arrayOf("loadfile", path))
                 instance.setPropertyBoolean("pause", desiredPause)
                 statisticsHandler.postDelayed(ticker, 350)
@@ -210,6 +232,7 @@ class MpvEngine(private val context: Context, private val software: Boolean,
                     video = if (width > 0) "$width × $height · $codec" else "等待视频信息",
                     audio = if (tracks.none { it.type == "audio" }) "无音轨" else PlaybackPolicy.audioSummary(audioCodec),
                     profile = profile, colorMatrix = matrix,
+                    appliedPanscan = instance.getPropertyDouble("panscan")?.takeIf { it.isFinite() },
                     renderer = renderer.ifBlank { "等待渲染器" },
                     fps = instance.getPropertyDouble("estimated-vf-fps")?.takeIf { it.isFinite() && it >= 0 } ?: 0.0,
                     dropped = instance.getPropertyInt("frame-drop-count") ?: 0,
@@ -239,8 +262,35 @@ class MpvEngine(private val context: Context, private val software: Boolean,
         onInteraction?.invoke("TimeUpdate")
     }
     fun speed(value: Double) {
-        synchronized(nativeLock) { mpv?.setPropertyDouble("speed", value); mutableState.value = state.value.copy(speed = value) }
+        if (!value.isFinite() || value <= 0) return
+        synchronized(nativeLock) { desiredSpeed = value; mpv?.setPropertyDouble("speed", value); mutableState.value = state.value.copy(speed = value) }
         onInteraction?.invoke("PlaybackRateChange")
+    }
+
+    fun videoSizing(mode: VideoSizing) {
+        synchronized(nativeLock) {
+            desiredSizing = mode
+            applySizing()
+            mutableState.value = state.value.copy(videoSizing = mode)
+        }
+    }
+
+    fun surfaceSize(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        synchronized(nativeLock) {
+            surfaceWidth = width; surfaceHeight = height
+            if (desiredSizing == VideoSizing.STRETCH) applySizing()
+        }
+    }
+
+    private fun applySizing() {
+        synchronized(nativeLock) {
+            val player = mpv ?: return
+            player.setPropertyDouble("panscan", if (desiredSizing == VideoSizing.FILL) 1.0 else 0.0)
+            val ratio = if (desiredSizing == VideoSizing.STRETCH && surfaceWidth > 0 && surfaceHeight > 0)
+                "$surfaceWidth:$surfaceHeight" else "no"
+            player.setPropertyString("video-aspect-override", ratio)
+        }
     }
     fun track(type: String, id: Int) {
         synchronized(nativeLock) { mpv?.setPropertyString(if (type == "audio") "aid" else "sid", if (id < 0) "no" else id.toString()); poll() }
@@ -249,6 +299,75 @@ class MpvEngine(private val context: Context, private val software: Boolean,
     fun subtitleDelay(value: Double) {
         synchronized(nativeLock) { mpv?.setPropertyDouble("sub-delay", value) }
         onInteraction?.invoke("SubtitleOffsetChange")
+    }
+
+    private fun subtitleTrackIds(instance: MPVLib): Set<Int> {
+        val count = instance.getPropertyInt("track-list/count")?.coerceIn(0, 64) ?: 0
+        return (0 until count).mapNotNull { index ->
+            val prefix = "track-list/$index/"
+            if (instance.getPropertyString(prefix + "type") == "sub") instance.getPropertyInt(prefix + "id") else null
+        }.toSet()
+    }
+
+    private fun restoreSubtitles() {
+        val instance = mpv ?: return
+        externalSubtitleTracks.clear()
+        addedSubtitles.forEach { subtitle ->
+            val before = subtitleTrackIds(instance)
+            instance.command(arrayOf("sub-add", subtitle.file.absolutePath, "cached", subtitle.title))
+            (subtitleTrackIds(instance) - before).singleOrNull()?.let { externalSubtitleTracks[it] = subtitle }
+        }
+        when (val selection = savedSubtitleSelection) {
+            SubtitleSelection.Off -> instance.setPropertyString("sid", "no")
+            is SubtitleSelection.Embedded -> instance.setPropertyString("sid", selection.id.toString())
+            is SubtitleSelection.External -> {
+                val id = externalSubtitleTracks.entries.firstOrNull { it.value == selection.subtitle }?.key
+                instance.setPropertyString("sid", id?.toString() ?: "no")
+            }
+            null -> Unit
+        }
+        savedSubtitleSelection = null
+        poll()
+    }
+
+    private fun rememberSubtitleSelection(instance: MPVLib) {
+        val count = instance.getPropertyInt("track-list/count")?.coerceIn(0, 64) ?: 0
+        val selected = (0 until count).firstNotNullOfOrNull { index ->
+            val prefix = "track-list/$index/"
+            if (instance.getPropertyString(prefix + "type") == "sub" && instance.getPropertyBoolean(prefix + "selected") == true)
+                instance.getPropertyInt(prefix + "id") else null
+        }
+        savedSubtitleSelection = when {
+            selected == null -> SubtitleSelection.Off
+            externalSubtitleTracks.containsKey(selected) -> SubtitleSelection.External(externalSubtitleTracks.getValue(selected))
+            else -> SubtitleSelection.Embedded(selected)
+        }
+    }
+
+    /** mpv owns each accepted private cache file until the engine is closed. */
+    fun addSubtitle(subtitle: SubtitleFile, finished: (String?) -> Unit) {
+        val queued = statisticsHandler.post {
+            val error = synchronized(nativeLock) {
+                val instance = mpv
+                if (released || instance == null || !state.value.ready) "请等视频开始播放后再添加字幕"
+                else if (addedSubtitles.size >= 20) "已添加太多字幕，请重新打开视频"
+                else try {
+                    val before = instance.getPropertyInt("track-list/count") ?: 0
+                    val beforeSubtitles = subtitleTrackIds(instance)
+                    instance.command(arrayOf("sub-add", subtitle.file.absolutePath, "select", subtitle.title))
+                    val after = instance.getPropertyInt("track-list/count") ?: 0
+                    if (after <= before) "无法解析字幕，请检查文件格式"
+                    else {
+                        addedSubtitles.add(subtitle)
+                        (subtitleTrackIds(instance) - beforeSubtitles).singleOrNull()?.let { externalSubtitleTracks[it] = subtitle }
+                        poll(); null
+                    }
+                } catch (_: Exception) { "无法加载字幕，请重试" }
+            }
+            if (error != null) subtitle.file.delete()
+            handler.post { if (error == null && !released) onInteraction?.invoke("SubtitleTrackChange"); finished(error) }
+        }
+        if (!queued) { subtitle.file.delete(); handler.post { finished("播放器已关闭") } }
     }
 
     fun diagnostics(): String = JSONObject().apply {
@@ -276,14 +395,21 @@ class MpvEngine(private val context: Context, private val software: Boolean,
         synchronized(nativeLock) {
             released = true
             statisticsHandler.removeCallbacks(ticker)
-            mpv?.let { instance -> runCatching { instance.removeObserver(observer); instance.destroy() } }
+            mpv?.let { instance ->
+                if (state.value.ready) runCatching { rememberSubtitleSelection(instance) }
+                runCatching { instance.removeObserver(observer); instance.destroy() }
+            }
+            externalSubtitleTracks.clear()
             mpv = null
             runCatching { descriptor?.close() }; descriptor = null
         }
     }
 
     fun close() {
-        synchronized(nativeLock) { closed = true; release() }
+        synchronized(nativeLock) {
+            closed = true; release()
+            addedSubtitles.forEach { it.file.delete() }; addedSubtitles.clear()
+        }
         statisticsThread.quitSafely()
     }
 }

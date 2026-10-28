@@ -12,8 +12,8 @@ android {
         applicationId = "dev.prism.player"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.6-alpha"
+        versionCode = 8
+        versionName = "0.1.7-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }

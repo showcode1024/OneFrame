@@ -31,6 +31,9 @@ data class HomeState(
     val servers: List<EmbySession> = emptyList(),
     val experimentalP5Hardware: Boolean = false,
     val fastScaling: Boolean = false,
+    val favoriteBusy: Boolean = false,
+    val favorites: List<LibraryItem> = emptyList(),
+    val favoritesError: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -43,6 +46,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var versionsJob: Job? = null
     private var homeJob: Job? = null
     private var playbackJob: Job? = null
+    private var favoriteJob: Job? = null
+    private var favoriteRevision = 0L
+    private val favoriteChanges = mutableMapOf<String, Pair<Long, Boolean>>()
+
+    private fun clearFavoriteRequests() {
+        favoriteJob?.cancel(); favoriteJob = null; favoriteRevision = 0; favoriteChanges.clear()
+    }
+    private fun preserveRecentFavorites(items: List<LibraryItem>, startedAt: Long): List<LibraryItem> = items.map { item ->
+        favoriteChanges[item.id]?.takeIf { it.first > startedAt }?.let { item.copy(favorite = it.second) } ?: item
+    }
 
     init { if (state.value.session != null) { loadLibrary(); refreshHome() } }
     fun refreshRecents() { mutableState.update { it.copy(recents = store.recents()) } }
@@ -65,10 +78,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val session = api.login(base, user, password)
-                libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel()
+                libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel(); clearFavoriteRequests()
                 store.saveSession(session)
                 mutableState.update { it.copy(session = session, servers = store.sessions(), path = emptyList(), search = "", loading = false,
-                    items = emptyList(), resumeItems = emptyList(), latestItems = emptyList(), detail = null) }
+                    items = emptyList(), resumeItems = emptyList(), latestItems = emptyList(), detail = null, favoriteBusy = false,
+                    favorites = emptyList(), favoritesError = null) }
                 connected()
                 loadLibrary()
                 refreshHome()
@@ -83,18 +97,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         versionsJob?.cancel()
         homeJob?.cancel()
         playbackJob?.cancel()
+        clearFavoriteRequests()
         store.saveSession(session)
         mutableState.update { it.copy(session = session, servers = store.sessions(), items = emptyList(), path = emptyList(), search = "", loading = false,
-            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList()) }
+            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList(), favoriteBusy = false,
+            favorites = emptyList(), favoritesError = null) }
         loadLibrary(); refreshHome()
     }
 
     fun removeServer(server: EmbySession) {
         val wasActive = state.value.session == server
-        if (wasActive) { libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel() }
+        if (wasActive) { libraryJob?.cancel(); versionsJob?.cancel(); homeJob?.cancel(); playbackJob?.cancel(); clearFavoriteRequests() }
         val active = store.removeSession(server)
         mutableState.update { if (wasActive) it.copy(session = active, servers = store.sessions(), items = emptyList(), path = emptyList(), search = "", loading = false,
-            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList())
+            error = null, detail = null, versions = emptyList(), resumeItems = emptyList(), latestItems = emptyList(), favoriteBusy = false,
+            favorites = emptyList(), favoritesError = null)
             else it.copy(servers = store.sessions()) }
         if (wasActive && active != null) { loadLibrary(); refreshHome() }
         viewModelScope.launch { runCatching { api.logout(server) } }
@@ -116,13 +133,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         libraryJob?.cancel()
         val snapshot = state.value
         val session = snapshot.session ?: return
+        val startedAt = favoriteRevision
         libraryJob = viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val views = snapshot.path.isEmpty() && snapshot.search.isBlank()
                 val values = if (views) api.views(session) else api.items(session,
                     snapshot.path.lastOrNull()?.id, snapshot.search, if (more) snapshot.items.size else 0)
-                mutableState.update { it.copy(items = if (more) snapshot.items + values else values,
+                val currentValues = preserveRecentFavorites(values, startedAt)
+                mutableState.update { it.copy(items = if (more) it.items + currentValues else currentValues,
                     loading = false, canLoadMore = !views && values.size == 100) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error) }
@@ -131,12 +150,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshHome() {
         val session = state.value.session ?: return
+        val startedAt = favoriteRevision
         homeJob?.cancel()
         homeJob = viewModelScope.launch {
             val resume = try { api.resumeItems(session) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
             val latest = try { api.latestItems(session) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
-            if (state.value.session == session) mutableState.update { current -> current.copy(resumeItems = resume, latestItems = latest,
-                detail = current.detail?.let { detail -> (resume + latest).firstOrNull { it.id == detail.id } ?: detail }) }
+            val favorites = try { api.favorites(session) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            val currentResume = preserveRecentFavorites(resume, startedAt)
+            val currentLatest = preserveRecentFavorites(latest, startedAt)
+            if (state.value.session == session) mutableState.update { current ->
+                val fetchedFavorites = favorites?.let { preserveRecentFavorites(it, startedAt).filter { item -> item.favorite } }
+                val pendingAdds = if (fetchedFavorites != null) current.favorites.filter { item ->
+                    favoriteChanges[item.id]?.let { it.first > startedAt && it.second } == true && fetchedFavorites.none { it.id == item.id }
+                } else emptyList()
+                current.copy(resumeItems = currentResume, latestItems = currentLatest,
+                    favorites = if (fetchedFavorites == null) current.favorites else pendingAdds + fetchedFavorites,
+                    favoritesError = if (favorites == null) "收藏加载失败，请检查网络后刷新" else null,
+                    detail = current.detail?.let { detail -> (currentResume + currentLatest).firstOrNull { it.id == detail.id } ?: detail })
+            }
         }
     }
 
@@ -160,6 +191,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeDetail() { versionsJob?.cancel(); playbackJob?.cancel(); mutableState.update { it.copy(detail = null, versionsLoading = false, loading = false, error = null) } }
     fun selectVersion(id: String) { mutableState.update { it.copy(selectedVersionId = id) } }
 
+    fun toggleFavorite(item: LibraryItem) {
+        val snapshot = state.value
+        val session = snapshot.session ?: return
+        if (snapshot.favoriteBusy) return
+        val current = snapshot.detail?.takeIf { it.id == item.id }
+            ?: (snapshot.items + snapshot.resumeItems + snapshot.latestItems + snapshot.favorites).firstOrNull { it.id == item.id } ?: item
+        val requested = !current.favorite
+        mutableState.update { it.copy(favoriteBusy = true, error = null) }
+        favoriteJob = viewModelScope.launch {
+            try {
+                val confirmed = api.setFavorite(session, item.id, requested)
+                if (state.value.session != session) return@launch
+                favoriteChanges[item.id] = ++favoriteRevision to confirmed
+                fun update(value: LibraryItem) = if (value.id == item.id) value.copy(favorite = confirmed) else value
+                mutableState.update { currentState -> currentState.copy(favoriteBusy = false,
+                    detail = currentState.detail?.let(::update), items = currentState.items.map(::update),
+                    resumeItems = currentState.resumeItems.map(::update), latestItems = currentState.latestItems.map(::update),
+                    path = currentState.path.map(::update), favorites = if (confirmed)
+                        (listOf(current.copy(favorite = true)) + currentState.favorites.filterNot { it.id == item.id })
+                        else currentState.favorites.filterNot { it.id == item.id }) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (state.value.session == session) { mutableState.update { it.copy(favoriteBusy = false) }; fail(e, clearLoading = false) }
+            }
+        }
+    }
+
     fun playSelected(ready: (StreamSource) -> Unit) {
         if (state.value.loading) return
         val session = state.value.session ?: return
@@ -176,10 +234,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun fail(error: Exception, invalidateSession: Boolean = true) {
+    private fun fail(error: Exception, invalidateSession: Boolean = true, clearLoading: Boolean = true) {
         if (invalidateSession && error is EmbyException && error.status == 401) {
+            clearFavoriteRequests()
             val active = state.value.session?.let { store.removeSession(it) }
-            mutableState.update { it.copy(session = active, servers = store.sessions(), items = emptyList(), path = emptyList(), detail = null) }
+            mutableState.update { it.copy(session = active, servers = store.sessions(), items = emptyList(), path = emptyList(), detail = null,
+                favoriteBusy = false, favorites = emptyList(), favoritesError = null, resumeItems = emptyList(), latestItems = emptyList()) }
             if (active != null) { loadLibrary(); refreshHome() }
         }
         val message = when (error) {
@@ -189,6 +249,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is javax.net.ssl.SSLException -> "HTTPS 证书验证失败，请检查服务器证书"
             else -> "连接失败，请检查服务器地址、网络和服务状态"
         }
-        mutableState.update { it.copy(loading = false, error = message) }
+        mutableState.update { it.copy(loading = if (clearLoading) false else it.loading, error = message) }
     }
 }

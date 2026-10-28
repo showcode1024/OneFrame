@@ -7,17 +7,20 @@ data class LibraryItem(
     val year: String = "", val overview: String = "", val imageTag: String = "",
     val folder: Boolean = false, val positionTicks: Long = 0,
     val backdropTag: String = "", val runtimeTicks: Long = 0,
-    val genres: List<String> = emptyList(), val rating: String = "",
+    val genres: List<String> = emptyList(), val rating: String = "", val favorite: Boolean = false,
 )
+data class EmbySubtitle(val index: Int, val title: String, val language: String = "")
 data class MediaVersion(
     val id: String, val name: String, val container: String, val size: Long,
     val width: Int, val height: Int, val videoCodec: String, val audioCodec: String,
     val videoRange: String, val playable: Boolean, val runtimeTicks: Long,
+    val externalSubtitles: List<EmbySubtitle> = emptyList(),
 )
 data class StreamSource(
     val url: String, val itemId: String, val mediaSourceId: String,
     val playSessionId: String, val title: String, val startSeconds: Double,
     val versionName: String = "",
+    val externalSubtitles: List<EmbySubtitle> = emptyList(),
 )
 
 object PlaybackPolicy {
