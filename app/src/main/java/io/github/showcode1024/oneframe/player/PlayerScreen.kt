@@ -3,6 +3,7 @@ package io.github.showcode1024.oneframe.player
 import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -28,13 +29,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.showcode1024.oneframe.data.PlaybackPolicy
 import io.github.showcode1024.oneframe.data.EmbySubtitle
 import io.github.showcode1024.oneframe.ui.Mint
 import io.github.showcode1024.oneframe.ui.Muted
@@ -56,6 +59,7 @@ import kotlinx.coroutines.delay
     var indicatorTick by remember { mutableIntStateOf(0) }
     var activeAdjustment by remember { mutableStateOf(false) }
     var sliderValue by remember { mutableFloatStateOf(0f) }
+    val compact = LocalConfiguration.current.screenHeightDp < 480
     BackHandler(locked) { controls = true }
     LaunchedEffect(indicatorTick, activeAdjustment) {
         if (!activeAdjustment && indicator != null) { delay(1300); indicator = null }
@@ -122,62 +126,59 @@ import kotlinx.coroutines.delay
         indicator?.takeIf { !locked }?.let { AdjustmentHud(it, Modifier.align(Alignment.Center)) }
         if (!locked && (controls || state.paused || !state.ready)) {
             Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .8f), Color.Transparent)))
-                .statusBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp)) {
+                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .78f), Color.Black.copy(alpha = .38f), Color.Transparent)))
+                .statusBarsPadding().padding(start = 12.dp, end = 12.dp, top = if (compact) 2.dp else 12.dp, bottom = if (compact) 12.dp else 24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = close) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
-                    Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White)
-                        Text(listOf(versionName, state.decoder).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 10.sp, color = Mint,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
+                    IconButton(onClick = close, modifier = Modifier.size(44.dp)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
+                    Column(Modifier.weight(1f).padding(start = 6.dp, end = 8.dp)) {
+                        Text(title, fontSize = if (compact) 14.sp else 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White)
+                        Text(listOf(versionName, state.decoder).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.sp, color = Color.White.copy(alpha = .68f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                     }
-                    IconButton(onClick = { locked = true; controls = true; dialog = null; indicator = null }, Modifier.testTag("lockControls")) { Icon(Icons.Rounded.LockOpen, "锁定播放控制", tint = Color.White) }
-                    IconButton(onClick = { dialog = "diagnostics" }, Modifier.testTag("diagnostics")) { Icon(Icons.Rounded.Info, "播放信息", tint = Color.White) }
+                    IconButton(onClick = { locked = true; controls = true; dialog = null; indicator = null }, Modifier.size(44.dp).testTag("lockControls")) { Icon(Icons.Rounded.LockOpen, "锁定播放控制", Modifier.size(21.dp), tint = Color.White) }
+                    IconButton(onClick = { dialog = "diagnostics" }, Modifier.size(44.dp).testTag("diagnostics")) { Icon(Icons.Rounded.Info, "播放信息", Modifier.size(21.dp), tint = Color.White) }
                 }
             }
             if (!state.buffering && state.error == null) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                IconButton(onClick = { engine.seek(state.position - 10) }) { Icon(Icons.Rounded.Replay10, "后退 10 秒", Modifier.size(32.dp), tint = Color.White) }
-                FilledIconButton(onClick = { engine.pause(!state.paused) }, modifier = Modifier.size(64.dp).testTag("playPause"),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White.copy(alpha = .15f), contentColor = Color.White)) {
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 32.dp else 42.dp)) {
+                IconButton(onClick = { engine.seek(state.position - 10) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Rounded.Replay10, "后退 10 秒", Modifier.size(30.dp), tint = Color.White) }
+                FilledIconButton(onClick = { engine.pause(!state.paused) }, modifier = Modifier.size(if (compact) 56.dp else 68.dp).testTag("playPause"),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = .46f), contentColor = Color.White)) {
                     Icon(if (state.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (state.paused) "播放" else "暂停", Modifier.size(38.dp))
                 }
-                IconButton(onClick = { engine.seek(state.position + 10) }) { Icon(Icons.Rounded.Forward10, "前进 10 秒", Modifier.size(32.dp), tint = Color.White) }
+                IconButton(onClick = { engine.seek(state.position + 10) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Rounded.Forward10, "前进 10 秒", Modifier.size(30.dp), tint = Color.White) }
             }
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .85f))))
-                .navigationBarsPadding().padding(horizontal = 24.dp, vertical = 18.dp)) {
-                Text(if (state.experimentalHardware && state.profile == 5 && state.hardwareApi.isNotBlank() && state.hardwareApi != "no")
-                    "P5 实验系统解码 · 色彩未验证" else PlaybackPolicy.videoSummary(state.profile, state.colorMatrix), color = Mint, fontSize = 10.sp)
-                Spacer(Modifier.height(8.dp))
-                Slider(value = dragging ?: state.position.toFloat().coerceIn(0f, state.duration.toFloat().coerceAtLeast(1f)),
-                    onValueChange = { dragging = it }, onValueChangeFinished = { dragging?.let { engine.seek(it.toDouble()) }; dragging = null },
-                    valueRange = 0f..state.duration.toFloat().coerceAtLeast(1f), enabled = state.duration > 0,
-                    colors = SliderDefaults.colors(thumbColor = Mint, activeTrackColor = Mint), modifier = Modifier.testTag("seek"))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatTime(dragging?.toDouble() ?: state.position), color = Color.White, fontSize = 11.sp)
-                    Text(formatTime(state.duration), color = Color.White.copy(alpha = .75f), fontSize = 11.sp)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .58f), Color.Black.copy(alpha = .90f))))
+                .navigationBarsPadding().padding(start = if (compact) 20.dp else 16.dp, end = if (compact) 20.dp else 16.dp,
+                    top = if (compact) 16.dp else 28.dp, bottom = if (compact) 4.dp else 12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(formatTime(dragging?.toDouble() ?: state.position), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    PlayerSeekBar(value = dragging ?: state.position.toFloat().coerceIn(0f, state.duration.toFloat().coerceAtLeast(1f)),
+                        duration = state.duration.toFloat().coerceAtLeast(1f), enabled = state.duration > 0,
+                        onValueChange = { dragging = it }, onValueChangeFinished = { dragging?.let { engine.seek(it.toDouble()) }; dragging = null },
+                        modifier = Modifier.weight(1f).testTag("seek"))
+                    Text(formatTime(state.duration), color = Color.White.copy(alpha = .72f), fontSize = 11.sp)
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(onClick = { dialog = "speed" }) { Text("${state.speed}×", color = Color.White, fontSize = 12.sp) }
-                    IconButton(onClick = { dialog = "tracks" }) { Icon(Icons.Rounded.Subtitles, "字幕与音轨", tint = Color.White) }
-                    IconButton(onClick = { sliderValue = displayControls.brightness(); dialog = "brightness" }, Modifier.testTag("brightnessControl")) { Icon(Icons.Rounded.Brightness6, "调节亮度", tint = Color.White) }
-                    IconButton(onClick = { sliderValue = displayControls.volume(); dialog = "volume" }, Modifier.testTag("volumeControl")) { Icon(Icons.AutoMirrored.Rounded.VolumeUp, "调节音量", tint = Color.White) }
-                    IconButton(onClick = { dialog = "sizing" }, Modifier.testTag("videoSizing")) { Icon(Icons.Rounded.AspectRatio, "画面比例", tint = Color.White) }
-                    IconButton(onClick = rotate) { Icon(Icons.Rounded.ScreenRotation, "切换横竖屏", tint = Color.White) }
+                    IconButton(onClick = { dialog = "speed" }, modifier = Modifier.size(46.dp).semantics { contentDescription = "播放速度" }) { Text("${state.speed}×", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                    IconButton(onClick = { dialog = "tracks" }, modifier = Modifier.size(46.dp)) { Icon(Icons.Rounded.Subtitles, "字幕与音轨", Modifier.size(22.dp), tint = Color.White) }
+                    IconButton(onClick = { sliderValue = displayControls.brightness(); dialog = "brightness" }, Modifier.size(46.dp).testTag("brightnessControl")) { Icon(Icons.Rounded.Brightness6, "调节亮度", Modifier.size(22.dp), tint = Color.White) }
+                    IconButton(onClick = { sliderValue = displayControls.volume(); dialog = "volume" }, Modifier.size(46.dp).testTag("volumeControl")) { Icon(Icons.AutoMirrored.Rounded.VolumeUp, "调节音量", Modifier.size(22.dp), tint = Color.White) }
+                    IconButton(onClick = { dialog = "sizing" }, Modifier.size(46.dp).testTag("videoSizing")) { Icon(Icons.Rounded.AspectRatio, "画面比例", Modifier.size(22.dp), tint = Color.White) }
+                    IconButton(onClick = rotate, modifier = Modifier.size(46.dp)) { Icon(Icons.Rounded.ScreenRotation, "切换横竖屏", Modifier.size(22.dp), tint = Color.White) }
                 }
-                Text("左侧上下滑动调亮度 · 右侧调音量", color = Color.White.copy(alpha = .66f), fontSize = 10.sp)
             }
         }
         if (!locked) state.error?.let { message ->
-            AlertDialog(onDismissRequest = {}, title = { Text("暂时无法播放") }, text = { Text(message) },
+            PlayerDialog(onDismissRequest = {}, title = { Text("暂时无法播放") }, text = { Text(message) },
                 confirmButton = { TextButton(onClick = close) { Text("返回片库") } },
                 dismissButton = { TextButton(onClick = { dialog = "diagnostics" }) { Text("查看诊断") } })
         }
     }
     when (if (locked) null else dialog) {
-        "diagnostics" -> AlertDialog(onDismissRequest = { dialog = null }, title = { Text("播放信息") }, text = {
+        "diagnostics" -> PlayerDialog(onDismissRequest = { dialog = null }, title = { Text("播放信息") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 DiagnosticRow("视频", state.video)
                 if (versionName.isNotBlank()) DiagnosticRow("Emby 版本", versionName)
@@ -209,25 +210,34 @@ import kotlinx.coroutines.delay
             }
         }, confirmButton = { TextButton(onClick = { copyDiagnostics(); copied = true }) { Text(if (copied) "已复制" else "复制诊断") } },
             dismissButton = { TextButton(onClick = { dialog = null }) { Text("关闭") } })
-        "speed" -> AlertDialog(onDismissRequest = { dialog = null }, title = { Text("播放速度") }, text = {
+        "speed" -> PlayerDialog(onDismissRequest = { dialog = null }, title = { Text("播放速度") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) { listOf(.5, .75, 1.0, 1.25, 1.5, 2.0).forEach { speed ->
                 TextButton(onClick = { engine.speed(speed); dialog = null }, modifier = Modifier.fillMaxWidth()) {
-                    Text("${speed}×${if (speed == state.speed) "  ✓" else ""}")
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("${speed}×", color = Color.White)
+                        if (speed == state.speed) Icon(Icons.Rounded.Check, null, Modifier.size(20.dp), tint = Mint)
+                    }
                 }
             } }
         }, confirmButton = { TextButton(onClick = { dialog = null }) { Text("取消") } })
-        "sizing" -> AlertDialog(onDismissRequest = { dialog = null }, title = { Text("画面比例") }, text = {
+        "sizing" -> PlayerDialog(onDismissRequest = { dialog = null }, title = { Text("画面比例") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 VideoSizing.entries.forEach { mode ->
                     TextButton(onClick = { engine.videoSizing(mode); dialog = null }, modifier = Modifier.fillMaxWidth().testTag("sizing-${mode.name}")) {
-                        Text(mode.label + when (mode) { VideoSizing.FIT -> " · 完整画面"; VideoSizing.FILL -> " · 裁剪边缘"; VideoSizing.STRETCH -> " · 可能变形" } + if (state.videoSizing == mode) "  ✓" else "")
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(mode.label, color = Color.White)
+                                Text(when (mode) { VideoSizing.FIT -> "完整画面"; VideoSizing.FILL -> "裁剪边缘"; VideoSizing.STRETCH -> "可能变形" }, color = Muted, fontSize = 11.sp)
+                            }
+                            if (state.videoSizing == mode) Icon(Icons.Rounded.Check, null, Modifier.size(20.dp), tint = Mint)
+                        }
                     }
                 }
             }
         }, confirmButton = { TextButton(onClick = { dialog = null }) { Text("关闭") } })
         "brightness", "volume" -> {
             val brightness = dialog == "brightness"
-            AlertDialog(onDismissRequest = { dialog = null }, title = { Text(if (brightness) "亮度" else "媒体音量") }, text = {
+            PlayerDialog(onDismissRequest = { dialog = null }, title = { Text(if (brightness) "亮度" else "媒体音量") }, text = {
                 Column {
                     Text(if (!brightness && displayControls.volumeFixed) "当前输出设备的音量由系统或外接设备控制" else "${(sliderValue * 100).toInt()}%", color = Muted)
                     Slider(value = sliderValue, onValueChange = { value ->
@@ -238,19 +248,19 @@ import kotlinx.coroutines.delay
                 }
             }, confirmButton = { TextButton(onClick = { dialog = null }) { Text("完成") } })
         }
-        "tracks" -> AlertDialog(onDismissRequest = { dialog = null }, title = { Text("音轨与字幕") }, text = {
+        "tracks" -> PlayerDialog(onDismissRequest = { dialog = null }, title = { Text("音轨与字幕") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text("音轨", color = Mint, fontSize = 12.sp)
                 val audio = state.tracks.filter { it.type == "audio" }
                 if (audio.isEmpty()) Text("没有可切换的音轨", color = Muted, fontSize = 12.sp)
-                audio.forEach { track -> TextButton(onClick = { engine.track("audio", track.id) }) {
-                    Text((if (track.selected) "✓  " else "") + track.label, maxLines = 2)
+                audio.forEach { track -> TextButton(onClick = { engine.track("audio", track.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Text((if (track.selected) "✓  " else "") + track.label, modifier = Modifier.fillMaxWidth(), maxLines = 2)
                 } }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("字幕", color = Mint, fontSize = 12.sp)
-                TextButton(onClick = { engine.track("sub", -1) }) { Text("关闭字幕") }
-                state.tracks.filter { it.type == "sub" }.forEach { track -> TextButton(onClick = { engine.track("sub", track.id) }) {
-                    Text((if (track.selected) "✓  " else "") + track.label, maxLines = 2)
+                TextButton(onClick = { engine.track("sub", -1) }, modifier = Modifier.fillMaxWidth()) { Text("关闭字幕", modifier = Modifier.fillMaxWidth()) }
+                state.tracks.filter { it.type == "sub" }.forEach { track -> TextButton(onClick = { engine.track("sub", track.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Text((if (track.selected) "✓  " else "") + track.label, modifier = Modifier.fillMaxWidth(), maxLines = 2)
                 } }
                 TextButton(onClick = { dialog = null; pickSubtitle() }, enabled = !subtitleLoading, modifier = Modifier.testTag("addLocalSubtitle")) {
                     Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("添加本地字幕")
@@ -272,6 +282,30 @@ import kotlinx.coroutines.delay
             }
         }, confirmButton = { TextButton(onClick = { dialog = null }) { Text("完成") } })
     }
+}
+
+@Composable private fun PlayerDialog(onDismissRequest: () -> Unit, title: @Composable () -> Unit,
+    text: @Composable () -> Unit, confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable (() -> Unit)? = null) {
+    AlertDialog(onDismissRequest = onDismissRequest, title = title, text = text,
+        confirmButton = confirmButton, dismissButton = dismissButton,
+        shape = RoundedCornerShape(20.dp), containerColor = Color(0xFF1B1D22),
+        titleContentColor = Color.White, textContentColor = Color(0xFFDBDEE5), tonalElevation = 0.dp)
+}
+
+/** Keep the seek target accessible while drawing a quiet, fine-grained progress line. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun PlayerSeekBar(value: Float, duration: Float, enabled: Boolean, onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit, modifier: Modifier = Modifier) {
+    val progress = (value / duration).coerceIn(0f, 1f)
+    Slider(value = value.coerceIn(0f, duration), onValueChange = onValueChange, onValueChangeFinished = onValueChangeFinished,
+        valueRange = 0f..duration, enabled = enabled, modifier = modifier,
+        thumb = { Box(Modifier.size(12.dp).background(Color.White, CircleShape)) },
+        track = {
+            Box(Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = .30f), CircleShape)) {
+                Box(Modifier.fillMaxWidth(progress).height(3.dp).background(Mint, CircleShape))
+            }
+        })
 }
 
 private data class AdjustmentIndicator(val brightness: Boolean, val value: Float, val fixedVolume: Boolean)

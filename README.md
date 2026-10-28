@@ -4,7 +4,7 @@ Android 原生 Emby 播放器的首个可运行原型。手机、平板优先，
 
 仓库：[showcode1024/OneFrame](https://github.com/showcode1024/OneFrame)。
 
-当前版本：**0.1.7-alpha**。首页、片库、影片详情与播放界面经过重新设计，支持收藏和外挂文本字幕。启动时可自动检查 GitHub Release，发现新版本后可打开浏览器下载。此前的播放路径与验证范围见 [0.1.2 验证记录](docs/VALIDATION-0.1.2.md)。
+当前版本：**0.1.8-alpha**。首页、海报墙、影片详情与播放界面采用更注重封面和背景图的设计，支持收藏和外挂文本字幕。启动时可自动检查 GitHub Release，发现新版本后可打开浏览器下载。此前的播放路径与验证范围见 [0.1.2 验证记录](docs/VALIDATION-0.1.2.md)。
 
 ## 运行
 
@@ -72,7 +72,7 @@ Windows：
 
 首次构建需要连接 Google Maven 与 Maven Central。若发生 TLS/下载失败，先修复网络或重试，不关闭证书校验。
 
-仓库有两个工作流：`Android build` 在分支更新时构建 debug 测试产物；`Publish Android release` 在推送 `v版本号` 标签时，由 GitHub 从源码构建、使用项目固定签名、验证并上传 APK 和 SHA-256 文件到 Releases。`v0.1.6-alpha` 和 `v0.1.7-alpha` 暂以草稿创建，等待签名 APK 验证后再发布。发布说明放在 `docs/releases/v版本号.md`，标签必须与 `versionName` 一致。
+仓库有两个工作流：`Android build` 在分支更新时构建 debug 测试产物；`Publish Android release` 在推送 `v版本号` 标签时，由 GitHub 从源码构建、使用项目固定签名、验证并上传 APK 和 SHA-256 文件到 Releases。`v0.1.6-alpha`、`v0.1.7-alpha` 和 `v0.1.8-alpha` 先以草稿创建，待签名 APK 验证后再发布。发布说明放在 `docs/releases/v版本号.md`，标签必须与 `versionName` 一致。
 
 发布签名通过仓库的四个 Actions Secrets 提供：`ONEFRAME_KEYSTORE_BASE64`、`ONEFRAME_STORE_PASSWORD`、`ONEFRAME_KEY_ALIAS`、`ONEFRAME_KEY_PASSWORD`。私钥和密码不进入 Git，也不包含在 APK 内。首次配置后不要随意更换，否则后续包将无法覆盖升级。更新版本时同时递增 `versionCode` 和 `versionName`，提交发布说明，再推送对应标签。
 
@@ -94,14 +94,16 @@ app/src/main/java/io/github/showcode1024/oneframe/
 
 ## 界面预览
 
-以下为 0.1.7 的实际模拟器截图；影片详情使用模拟服务器数据。
+以下为 0.1.8 的模拟器截图；首页、海报墙和详情使用本地模拟 Emby 服务与生成的示例图片，实际海报由用户的 Emby 服务器提供。
 
 ![手机主页](docs/screenshots/home-phone.png)
 
 ![平板主页](docs/screenshots/home-tablet.png)
 
+![手机海报墙](docs/screenshots/emby-grid-phone.png)
+
 影片详情和版本选择（模拟服务器示例数据）：
 
 ![影片版本选择](docs/screenshots/emby-versions-phone.png)
 
-![P5 播放诊断](docs/screenshots/diagnostics-dolby-p5.png)
+![播放控制](docs/screenshots/player-dolby-p5.png)
